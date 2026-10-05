@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 2,
+  "packageKind": "codexless-windows-companion",
+  "companionVersion": "0.1.0-dev",
+  "status": "portability-prep-not-installable",
+  "sourceLineage": {
+    "validatedHouseholdCommit": "37686a932ff0c355d363cd4dc3bbf1a9c3a46dc1"
+  },
+  "supportedHost": {
+    "os": "windows",
+    "scope": "per-user",
+    "sessionModel": "interactive-logged-in-user"
+  },
+  "codexless": {
+    "distribution": "Waterpark621/Codexless",
+    "qualifiedRelease": null,
+    "lifecycleContract": "pending-v1"
+  },
+  "tunnelClient": {
+    "qualifiedVersion": null,
+    "defaultTunnelCount": 1
+  },
+  "portability": {
+    "portable": false,
+    "remainingBlockers": [
+      "legacy external launcher Core/Host binding",
+      "legacy Host-derived working-directory binding",
+      "verified local runtime/binary binding",
+      "destination-machine installer and settings schema",
+      "qualified Codexless fork release",
+      "qualified tunnel credential/setup flow"
+    ]
+  }
+}

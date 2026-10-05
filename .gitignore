@@ -1,0 +1,16 @@
+test/.fixtures/
+test-results.log
+test/fixtures-console-*/
+test/fixtures-tunnel-*/
+.local/
+artifacts/
+outputs/
+recovery/
+*.pid
+*.receipt.json
+*.key
+*.key.json
+*.dpapi
+settings.local.json
+config.local.json
+tunnel-owners/

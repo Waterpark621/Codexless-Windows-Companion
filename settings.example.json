@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "project": {
+    "path": "<SELECT_DURING_INSTALL>"
+  },
+  "codexless": {
+    "port": 7690
+  },
+  "tunnel": {
+    "enabled": true,
+    "alias": "<CREATE_OR_SELECT_ON_THIS_PC>",
+    "credentialSource": "<LOCAL_USER_PROTECTED>"
+  }
+}
