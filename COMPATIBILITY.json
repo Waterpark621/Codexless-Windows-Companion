@@ -26,11 +26,11 @@
     "mutatingInstallEnabled": false,
     "automaticTunnelConnectEnabled": false,
     "doctorImplemented": true,
+    "doctorAcceptanceV1Implemented": true,
     "friendInstallReady": false,
     "remainingBlockers": [
       "qualified release/build trust binding",
       "generation-bound prior-boot release identity",
-      "listener/tunnel ownership and Browser Doctor acceptance",
       "tunnel launch provenance",
       "repair/uninstall/update rollback flows",
       "dependency and download provenance",

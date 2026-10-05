@@ -184,9 +184,9 @@ function Test-CodexlessReady {
     $response=$null;$stream=$null;$reader=$null
     try {
         $request=[Net.HttpWebRequest]::Create([string]$Config.readyUrl)
-        $request.Method='GET';$request.Proxy=$null;$request.Timeout=$TimeoutMs;$request.ReadWriteTimeout=$TimeoutMs
+        $request.Method='GET';$request.Proxy=$null;$request.AllowAutoRedirect=$false;$request.Timeout=$TimeoutMs;$request.ReadWriteTimeout=$TimeoutMs
         $response=$request.GetResponse()
-        if ([int]$response.StatusCode -ne 200) { return $false }
+        if ([int]$response.StatusCode -ne 200 -or [string]$response.ResponseUri.AbsoluteUri -cne [string]$Config.readyUrl) { return $false }
         $stream=$response.GetResponseStream();$reader=New-Object IO.StreamReader($stream)
         $body=$reader.ReadToEnd()
         if ($body.Length -gt 65536) { return $false }

@@ -9,20 +9,36 @@ function Add-Check([string]$Name,[string]$State,[string]$Detail) {
     $checks.Add([pscustomobject]@{name=$Name;state=$State;detail=$Detail})
 }
 
+function Get-LocalDoctorVerdict([object[]]$Checks) {
+    if($null -eq $Checks -or @($Checks).Count -eq 0){return 'FAIL'}
+    $canonical=@('PASS','DEGRADED','FAIL','SKIP')
+    foreach($check in @($Checks)){
+        if($null -eq $check -or !$check.PSObject.Properties['state']){return 'FAIL'}
+        $state=[string]$check.state
+        if(@($canonical|Where-Object{$_ -ceq $state}).Count -ne 1){return 'FAIL'}
+    }
+    if(@($Checks|Where-Object{[string]$_.state -ceq 'FAIL'}).Count -gt 0){return 'FAIL'}
+    if(@($Checks|Where-Object{[string]$_.state -ceq 'DEGRADED'}).Count -gt 0){return 'DEGRADED'}
+    'PASS'
+}
+
 try {
     if (!(Test-Path -LiteralPath $InstallDirectory -PathType Container)) {
-        throw 'Companion install directory is missing.'
+        throw 'DOCTOR_INSTALL_DIRECTORY_MISSING'
     }
     $runtime=Join-Path $InstallDirectory 'CompanionRuntime.psm1'
-    if (!(Test-Path -LiteralPath $runtime -PathType Leaf)) {
-        throw 'CompanionRuntime.psm1 is missing.'
+    $support=Join-Path $InstallDirectory 'DoctorSupport.psm1'
+    if (!(Test-Path -LiteralPath $runtime -PathType Leaf) -or !(Test-Path -LiteralPath $support -PathType Leaf)) {
+        throw 'DOCTOR_PACKAGE_INCOMPLETE'
     }
 
-    Import-Module $runtime -Force
+    Import-Module $runtime -Force -ErrorAction Stop
+    Import-Module $support -Force -ErrorAction Stop
     $cfg=Get-CompanionConfig $InstallDirectory
-    Add-Check 'settings' 'PASS' 'settings.json is valid and destination-owned paths resolve.'
-    Add-Check 'release' 'PASS' ("Codexless {0}; build {1}; host contract {2}." -f $cfg.release.version,$cfg.release.buildId.Substring(0,12),$cfg.release.hostContractVersion)
-    Add-Check 'node' 'PASS' $cfg.nodeExe
+
+    Add-Check 'settings' 'PASS' 'Destination settings are valid.'
+    Add-Check 'release' 'PASS' 'Selected Codexless release/build identity is valid.'
+    Add-Check 'node' 'PASS' 'Configured Node executable is available.'
 
     $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $taskName="Codexless-Household-$sid"
@@ -30,57 +46,85 @@ try {
     if ($null -eq $task) {
         Add-Check 'task' 'FAIL' 'Scheduled Task is not registered.'
     } else {
-        Add-Check 'task' 'PASS' ("Scheduled Task state: {0}." -f [string]$task.State)
+        $taskState=[string]$task.State
+        if($taskState -ceq 'Running'){
+            Add-Check 'task' 'PASS' 'Scheduled Task is running.'
+        }else{
+            Add-Check 'task' 'FAIL' 'Scheduled Task is not running.'
+        }
+
         try {
             $raw=(& (Join-Path $InstallDirectory 'Household-Task.ps1') -Action Status -LauncherDirectory $InstallDirectory | Out-String).Trim()
-            $status=$raw|ConvertFrom-Json
-
+            $status=$raw|ConvertFrom-Json -ErrorAction Stop
             $ownerState=if($status.taskState -eq 'Running' -and $status.ownerVerified -and $status.piecesVerified -and !$status.cleanupRequired){'PASS'}else{'FAIL'}
-            Add-Check 'owner' $ownerState ("task={0}; host={1}; ownerVerified={2}; piecesVerified={3}; cleanupRequired={4}" -f $status.taskState,$status.hostPresent,$status.ownerVerified,$status.piecesVerified,$status.cleanupRequired)
+            Add-Check 'owner' $ownerState $(if($ownerState -ceq 'PASS'){'Household owner and tracked pieces are verified.'}else{'Household owner or tracked pieces could not be verified.'})
+        } catch {
+            Add-Check 'owner' 'FAIL' 'Household ownership status could not be verified.'
+        }
 
-            if($status.listenerPresent -and (Test-CodexlessReady $cfg)){
-                Add-Check 'codexless-readiness' 'PASS' $cfg.readyUrl
-            }else{
-                Add-Check 'codexless-readiness' 'FAIL' ("listenerPresent={0}; readyz did not establish expected release identity." -f $status.listenerPresent)
-            }
+        $ownershipBefore=Get-DoctorListenerOwnershipSnapshot $InstallDirectory $cfg
+        $ownershipMid=$null
+        $ownershipAfter=$null
+        $readinessOk=$false
+        $browserResult=$null
 
-            if(@($cfg.tunnels).Count -eq 0){
-                Add-Check 'tunnel' 'SKIP' 'Tunnel is disabled in settings.'
-            }else{
-                foreach($t in @($cfg.tunnels)){
-                    $ts=Get-TunnelStatus $cfg $t
-                    if($null -ne $ts -and $ts.process_running -eq $true -and $ts.ready -eq $true -and $ts.tunnel_id -eq $t.tunnelId){
-                        Add-Check ("tunnel:"+$t.alias) 'PASS' 'Official runtime status is running and ready.'
-                    }else{
-                        Add-Check ("tunnel:"+$t.alias) 'FAIL' 'Official runtime status is absent, not running, not ready, or bound to another tunnel.'
-                    }
-                }
+        if($null -ne $ownershipBefore){
+            $readinessOk=Test-CodexlessReady $cfg
+            if($readinessOk){
+                $ownershipMid=Get-DoctorListenerOwnershipSnapshot $InstallDirectory $cfg
             }
-        }catch{
-            Add-Check 'household-status' 'FAIL' $_.Exception.Message
+            if($readinessOk -and (Test-DoctorOwnershipSnapshotEqual $ownershipBefore $ownershipMid)){
+                $browserResult=Get-DoctorBrowserAcceptance $InstallDirectory $cfg
+                $ownershipAfter=Get-DoctorListenerOwnershipSnapshot $InstallDirectory $cfg
+            }
+        }
+
+        $listenerStable=(
+            $null -ne $ownershipBefore -and
+            $null -ne $ownershipMid -and
+            $null -ne $ownershipAfter -and
+            (Test-DoctorOwnershipSnapshotEqual $ownershipBefore $ownershipMid) -and
+            (Test-DoctorOwnershipSnapshotEqual $ownershipBefore $ownershipAfter)
+        )
+        if($listenerStable){
+            Add-Check 'listener-ownership' 'PASS' 'Loopback listener stayed bound to the exact verified household owner chain.'
+        }else{
+            Add-Check 'listener-ownership' 'FAIL' 'Loopback listener ownership could not be established or changed during verification.'
+        }
+
+        if($readinessOk -and $listenerStable){
+            Add-Check 'codexless-readiness' 'PASS' 'Codexless readiness matches the selected release and host contract.'
+        }else{
+            Add-Check 'codexless-readiness' 'FAIL' 'Codexless readiness or release identity could not be established on the verified listener.'
+        }
+
+        $tunnel=Get-DoctorTunnelAcceptance $InstallDirectory $cfg
+        Add-Check 'tunnel-ownership' $tunnel.state $tunnel.detail
+
+        if($null -ne $browserResult -and $listenerStable){
+            Add-Check 'browser-backend' $browserResult.state $browserResult.detail
+        }else{
+            Add-Check 'browser-backend' 'FAIL' 'Codexless Browser backend connectivity was not established on the verified listener.'
         }
     }
-
-    Add-Check 'browser-extension' 'PENDING' 'Browser backend connectivity is not yet part of Doctor v0; this remains a friend-install release gate.'
-}catch{
-    Add-Check 'doctor' 'FAIL' $_.Exception.Message
+} catch {
+    Add-Check 'doctor' 'FAIL' 'Doctor could not establish the configured Companion package.'
 }
 
-$failed=@($checks|Where-Object {$_.state -eq 'FAIL'}).Count
+$checkArray=[object[]]$checks.ToArray()
+$verdict=Get-LocalDoctorVerdict $checkArray
 $result=[pscustomobject]@{
-    ok=($failed -eq 0)
-    installDirectory=$InstallDirectory
-    checks=@($checks)
+    ok=($verdict -ceq 'PASS')
+    verdict=$verdict
+    checks=$checkArray
 }
 
 if($Json){
     $result|ConvertTo-Json -Depth 6
 }else{
     $result.checks|Format-Table -AutoSize
-    if($result.ok){
-        Write-Output 'Doctor: PASS (Browser backend probe still pending for release qualification).'
-    }else{
-        Write-Output 'Doctor: FAIL'
-        exit 1
-    }
+    Write-Output ("Doctor: "+$result.verdict)
 }
+
+if($verdict -ceq 'FAIL'){exit 1}
+if($verdict -ceq 'DEGRADED'){exit 2}

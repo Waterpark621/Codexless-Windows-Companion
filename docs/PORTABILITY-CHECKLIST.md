@@ -29,13 +29,12 @@
 - [x] DPAPI destination-local credential storage is fixture-tested, but the preview installer does not collect/store a key.
 - [x] Read-only Doctor checks settings, release identity, task/owner state, readiness, and official tunnel status.
 - [x] Friendly Start / Stop / Restart / Status development entrypoints exist.
-- [ ] Add direct listener/tunnel ownership acceptance and Browser-backend connectivity to Doctor.
+- [x] Doctor directly verifies listener ancestry, exact tunnel ownership receipts, and read-only Browser backend connectivity.
 
 ## Required before friend install
 
 - [ ] Bind settings + qualified Codexless release/build identity to each owner generation and revalidate it throughout prior-boot recovery.
 - [ ] Qualify the Codexless dependency closure, Node runtime and tunnel-client binary/version; control inherited Node startup options.
-- [ ] Add direct listener/tunnel ownership and required Browser-backend checks to Doctor; pending required checks must not count as success.
 - [ ] Establish exact tunnel launch provenance before re-enabling automatic `runtimes connect`.
 - [ ] Add bounded native tunnel status/connect/stop execution.
 - [ ] Add an incomplete-install fence plus ownership-verified repair/uninstall.
