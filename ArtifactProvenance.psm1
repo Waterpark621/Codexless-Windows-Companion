@@ -22,7 +22,8 @@ function Get-ArtifactPolicy {
         $uri=[Uri]$policy.url
         if($policy.role -cne $Role -or $policy.sha256 -cnotmatch '^[0-9a-f]{64}$' -or $uri.Scheme -cne 'https' -or $uri.UserInfo -or $uri.Fragment -or $uri.Query -or !$uri.IsDefaultPort){throw 'invalid'}
         if($Role -eq 'node' -and ($policy.version -cne '24.12.0' -or $policy.architecture -cne 'win-x64' -or $policy.url -cne 'https://nodejs.org/dist/v24.12.0/node-v24.12.0-win-x64.zip')){throw 'invalid'}
-        if($Role -ne 'node'){throw 'unbound'}
+        if($Role -eq 'tunnel' -and ($policy.version -cne '0.0.14' -or $policy.architecture -cne 'windows-amd64' -or $policy.url -cne 'https://github.com/openai/tunnel-client/releases/download/v0.0.14/tunnel-client-v0.0.14-windows-amd64.zip' -or $policy.executableSha256 -cne 'fcc85a69ec0ad82518e4f8964f60c45e31787957782a0fc9c1b0c44e82d61b9b')){throw 'invalid'}
+        if($Role -eq 'codexless'){throw 'unbound'}
         if($policy.archiveType -cne 'zip' -or $policy.maxArchiveBytes -le 0 -or $policy.maxArchiveBytes -gt 536870912 -or $policy.maxExpandedBytes -le 0 -or $policy.maxExpandedBytes -gt 1073741824 -or $policy.maxEntries -lt 1 -or $policy.maxEntries -gt 10000){throw 'invalid'}
         $policy
     } catch { throw 'PROVENANCE_POLICY_UNBOUND: An approved source/version/archive pin is required.' }
@@ -66,6 +67,7 @@ function Expand-QualifiedArtifact {
             }
         }
         if(!$executableSha){throw 'invalid'}
+        if($policy.PSObject.Properties['executableSha256'] -and $executableSha -cne $policy.executableSha256){throw 'invalid'}
         # Destination creation happens only after the complete archive preflight.
         New-Item -ItemType Directory -Path $destinationPath -ErrorAction Stop|Out-Null
         foreach($item in $entries){
@@ -86,6 +88,12 @@ function Expand-QualifiedArtifact {
     finally{if($zip){$zip.Dispose()};if($stream){$stream.Dispose()}}
 }
 
+function Assert-ArtifactRedirect($Policy,[Uri]$Target) {
+    # Only the pinned GitHub asset may redirect once to its official asset CDN.
+    # The signed URL is temporary in-memory transport data; never persist it.
+    if($Policy.role -cne 'tunnel' -or $Policy.url -cne 'https://github.com/openai/tunnel-client/releases/download/v0.0.14/tunnel-client-v0.0.14-windows-amd64.zip' -or $Target.Scheme -cne 'https' -or $Target.Host -cne 'release-assets.githubusercontent.com' -or !$Target.IsDefaultPort -or $Target.UserInfo -or $Target.Fragment -or !$Target.AbsolutePath.StartsWith('/github-production-release-asset/')){throw 'PROVENANCE_REDIRECT_INVALID'}
+}
+
 function Save-QualifiedArtifact {
     param([ValidateSet('node','codexless','tunnel')][string]$Role,[string]$StagingDirectory,[ValidateRange(1000,120000)][int]$TimeoutMs=60000)
     $policy=Get-ArtifactPolicy $Role
@@ -99,7 +107,19 @@ function Save-QualifiedArtifact {
         $request.AllowAutoRedirect=$false;$request.Timeout=$TimeoutMs;$request.ReadWriteTimeout=[Math]::Min(1500,$TimeoutMs)
         $clock=[Diagnostics.Stopwatch]::StartNew()
         $response=$request.GetResponse()
-        if([int]$response.StatusCode -ne 200 -or $response.ResponseUri.AbsoluteUri -cne $policy.url -or $response.ContentLength -gt $policy.maxArchiveBytes){throw 'invalid'}
+        $expectedUrl=$policy.url
+        if([int]$response.StatusCode -eq 302){
+            $target=[Uri]$response.Headers['Location']
+            Assert-ArtifactRedirect $policy $target
+            $response.Dispose();$response=$null
+            $remaining=$TimeoutMs-[int]$clock.ElapsedMilliseconds
+            if($remaining -le 0){throw 'invalid'}
+            # New request: no auth, cookies, or origin headers forwarded.
+            $request=[Net.HttpWebRequest]::Create($target)
+            $request.AllowAutoRedirect=$false;$request.Timeout=$remaining;$request.ReadWriteTimeout=[Math]::Min(1500,$remaining)
+            $response=$request.GetResponse();$expectedUrl=$target.AbsoluteUri
+        }
+        if([int]$response.StatusCode -ne 200 -or $response.ResponseUri.AbsoluteUri -cne $expectedUrl -or $response.ContentLength -gt $policy.maxArchiveBytes){throw 'invalid'}
         $input=$response.GetResponseStream();$output=[IO.File]::Open($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
         $buffer=New-Object byte[] 81920;$total=0L
         while(($count=$input.Read($buffer,0,$buffer.Length)) -gt 0){

@@ -8,7 +8,11 @@ $passed=0
 function Assert([bool]$value){if(!$value){throw 'assertion failed'}}
 function Test([string]$name,[scriptblock]$body){& $body;$script:passed++;Write-Output "PASS $name"}
 Test 'Node source version and archive checksum are explicitly pinned' {$p=Get-ArtifactPolicy node;Assert ($p.version -ceq '24.12.0' -and $p.url.StartsWith('https://nodejs.org/dist/v24.12.0/') -and $p.sha256 -cmatch '^[0-9a-f]{64}$')}
-foreach($role in @('codexless','tunnel')){Test "Unbound $role cannot initiate download or mutation" {$dest=Join-Path $root $role;$failed=$false;try{Save-QualifiedArtifact $role $dest|Out-Null}catch{$failed=$_.Exception.Message -like 'PROVENANCE_POLICY_UNBOUND:*'};Assert $failed;Assert (!(Test-Path -LiteralPath $dest))}}
+foreach($role in @('codexless')){Test "Unbound $role cannot initiate download or mutation" {$dest=Join-Path $root $role;$failed=$false;try{Save-QualifiedArtifact $role $dest|Out-Null}catch{$failed=$_.Exception.Message -like 'PROVENANCE_POLICY_UNBOUND:*'};Assert $failed;Assert (!(Test-Path -LiteralPath $dest))}}
+
+Test 'Approved full tunnel client pins archive and executable independently' {$p=Get-ArtifactPolicy tunnel;Assert ($p.version -ceq '0.0.14' -and $p.executableSha256 -ceq 'fcc85a69ec0ad82518e4f8964f60c45e31787957782a0fc9c1b0c44e82d61b9b')}
+Test 'Only approved GitHub asset CDN redirect is allowed' {$p=Get-ArtifactPolicy tunnel;& $module {param($p) Assert-ArtifactRedirect $p ([Uri]'https://release-assets.githubusercontent.com/github-production-release-asset/fixture?temporary=fixture')} $p}
+foreach($url in @('http://release-assets.githubusercontent.com/github-production-release-asset/fixture','https://foreign.example/github-production-release-asset/fixture','https://release-assets.githubusercontent.com/other','https://release-assets.githubusercontent.com:8443/github-production-release-asset/fixture','https://credential@release-assets.githubusercontent.com/github-production-release-asset/fixture','https://release-assets.githubusercontent.com/github-production-release-asset/fixture#fragment')){Test 'Unsafe asset redirect refused' {$p=Get-ArtifactPolicy tunnel;$failed=$false;try{& $module {param($p,$u) Assert-ArtifactRedirect $p ([Uri]$u)} $p $url}catch{$failed=$true};Assert $failed}}
 
 function Fixture([string[]]$Names,[int]$Attributes=0){
     $path=Join-Path $root ([Guid]::NewGuid().ToString('N')+'.zip')
@@ -21,6 +25,7 @@ function Fixture([string[]]$Names,[int]$Attributes=0){
 }
 function Refuses($f){$failed=$false;try{Expand-QualifiedArtifact node $f.archive $f.destination|Out-Null}catch{$failed=$true};Assert $failed;Assert (!(Test-Path -LiteralPath $f.destination))}
 Test 'Verified archive stages without executing or promoting files' {$f=Fixture @('release/payload.txt');$r=Expand-QualifiedArtifact node $f.archive $f.destination;Assert (!$r.promoted -and $r.fileCount -eq 1);Assert ((Get-Content -LiteralPath (Join-Path $f.destination 'release\payload.txt') -Raw) -ceq 'fixture payload');Assert ($r.executableSha256 -ceq (Get-FileHash -LiteralPath (Join-Path $f.destination 'release\payload.txt') -Algorithm SHA256).Hash.ToLowerInvariant())}
+Test 'Pinned executable mismatch refuses extraction before mutation' {$f=Fixture @('release/payload.txt');$f.policy|Add-Member executableSha256 ('0'*64);Refuses $f}
 Test 'Checksum mismatch is rejected before destination mutation' {$f=Fixture @('payload.txt');$f.policy.sha256='0'*64;Refuses $f}
 foreach($name in @('../escape.txt','/absolute.txt','C:/drive.txt','safe\escape.txt','safe/name.','safe/CON.txt')) {Test "Unsafe ZIP entry rejected: $name" {$f=Fixture @($name);Refuses $f}}
 Test 'Case-insensitive duplicate entries are rejected before mutation' {$f=Fixture @('safe.txt','SAFE.txt');Refuses $f}
