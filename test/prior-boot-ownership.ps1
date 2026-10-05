@@ -3,6 +3,7 @@ Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot '..\PriorBootOwnership.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot '..\UserSessionTask.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot '..\CompanionRuntime.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot '..\GenerationIdentity.psm1') -Force
 $module=Get-Module PriorBootOwnership
 $root=Join-Path $PSScriptRoot ('.fixtures\prior-boot-'+[Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $root -Force | Out-Null
@@ -19,15 +20,18 @@ function New-Fixture {
     $script:def=New-HouseholdTaskDefinition $sid $folder (Join-Path $folder 'Task-Host.ps1') $powershell
     '{}' | Set-Content -LiteralPath (Join-Path $folder 'settings.json')
     $script:fixtureCfg=[pscustomobject]@{
+        settingsPath=(Join-Path $folder 'settings.json')
+        projectPath=$folder
+        release=[pscustomobject]@{version='fixture';buildId=('b'*64);sourceRevision=('c'*40);manifestSha256=('d'*64);hostContractVersion='codexless-public-preview-v1'}
         port=7690
         codexlessRoot=(Join-Path $folder 'release')
         nodeExe='C:\fixture\node.exe'
         launchScript=(Join-Path $folder 'release\scripts\launch.mjs')
         tunnelExe='C:\fixture\tunnel-client.exe'
         profileDir='C:\fixture\tunnel-profile'
-        tunnels=@([pscustomobject]@{alias='fixture';tunnelId='fixture-registration';enabled=$false})
+        tunnels=@([pscustomobject]@{alias='fixture';tunnelId='fixture-registration';enabled=$false;keyPath=(Join-Path $folder 'keys\fixture.dpapi')})
     }
-    $script:owner=[pscustomobject]@{version=1;pid=101;createdAt='2026-10-03T00:00:00.123456Z';userSid=$sid;taskName=$def.Name;hostScript=$def.HostScript;launcherDirectory=$folder}
+    $script:owner=[pscustomobject]@{version=1;pid=101;createdAt='2026-10-03T00:00:00.123456Z';userSid=$sid;taskName=$def.Name;hostScript=$def.HostScript;launcherDirectory=$folder;generationContract=(Get-CompanionGenerationContract $fixtureCfg)}
     Save 'task-owner.json' $owner
     '101' | Set-Content -LiteralPath (Join-Path $folder 'host.pid')
     $command=Get-CodexlessPrivateConsoleCommand $fixtureCfg
@@ -78,7 +82,7 @@ function Refuses {
     Assert $caught
     Assert ($before -ceq (Snapshot))
 }
-Test 'Legacy v1 prior-boot generation retires only exact dead receipts; diagnostic is sanitized and bounded' {
+Test 'Bound prior-boot generation retires only exact dead receipts; diagnostic is sanitized and bounded' {
     New-Fixture
     'preserved' | Set-Content -LiteralPath (Join-Path $def.LauncherDirectory 'unrelated.txt')
     Invoke-PriorBootOwnership $def
@@ -139,6 +143,7 @@ New-Item -ItemType File -Path (Join-Path $LauncherDirectory 'stop.flag') -Force 
 '@ | Set-Content -LiteralPath (Join-Path $def.LauncherDirectory 'Household-Host.ps1')
     $script:hostMock=[pscustomobject]@{recoveries=0;gateHeld=$false}
     function Import-Module {}
+    function Get-CompanionConfig {param($CompanionRoot) $fixtureCfg}
     function Get-ProcessIdentity {param($ProcessId) [pscustomobject]@{pid=$ProcessId;parentPid=999;createdAt='2026-10-05T05:00:00.0000000Z';userSid=$sid}}
     function Get-TaskSchedulerParentIdentity {param($ProcessId) [pscustomobject]@{pid=$ProcessId;executable=(Join-Path $env:SystemRoot 'System32\taskhostw.exe');createdAt='2026-10-05T04:55:20.0000000Z'}}
     function Get-AuthenticodeSignature { [pscustomobject]@{Status=$(if($InvalidAncestry){'Invalid'}else{'Valid'});SignerCertificate=[pscustomobject]@{Subject='O=Microsoft Corporation, CN=fixture'}} }
@@ -183,6 +188,21 @@ Test 'Duplicate owner gate cannot reach reconciliation or host launch' {
     Assert ($hostMock.recoveries -eq 0)
     Assert (!(Test-Path -LiteralPath (Join-Path $def.LauncherDirectory 'fixture-host-ran')))
 }
+foreach($field in @('buildId','sourceRevision','version','manifestSha256','hostContractVersion')) {
+    Test "Changed generation release $field refuses without mutation" {New-Fixture;$fixtureCfg.release.$field=if($field -eq 'sourceRevision'){'e'*40}elseif($field -in @('buildId','manifestSha256')){'e'*64}else{'changed'};Refuses}
+}
+foreach($field in @('projectPath','codexlessRoot','nodeExe','port','profileDir')) {
+    Test "Changed generation setting $field refuses without mutation" {New-Fixture;$fixtureCfg.$field=if($field -eq 'port'){7691}else{'C:\fixture\changed'};Refuses}
+}
+foreach($field in @('tunnelId','alias','enabled','keyPath')) {
+    Test "Changed generation tunnel $field refuses without mutation" {New-Fixture;$fixtureCfg.tunnels[0].$field=if($field -eq 'enabled'){$true}else{'changed'};Refuses}
+}
+Test 'Changed settings bytes refuse even if parsed observations are unchanged' {New-Fixture;'{"changed":true}'|Set-Content -LiteralPath $fixtureCfg.settingsPath;Refuses}
+Test 'Missing generation contract refuses legacy authority without mutation' {New-Fixture;$owner.PSObject.Properties.Remove('generationContract');Save 'task-owner.json' $owner;Refuses}
+foreach($value in @($null,[pscustomobject]@{version=0;sha256=('e'*64)},[pscustomobject]@{version=1;sha256='invalid'},[pscustomobject]@{version=1;sha256=('e'*64);path='private'})) {
+    Test 'Malformed generation contract fails closed with sanitized diagnostics' {New-Fixture;$owner.generationContract=$value;Save 'task-owner.json' $owner;Refuses}
+}
+Test 'Generation contract contains only version and digest and repeats deterministically' {New-Fixture;$a=Get-CompanionGenerationContract $fixtureCfg;$b=Get-CompanionGenerationContract $fixtureCfg;Assert ($a.sha256 -ceq $b.sha256);Assert (@($a.PSObject.Properties).Count -eq 2);Assert (($a|ConvertTo-Json)-notmatch 'fixture|userSid|project|command|tunnel|path')}
 Test 'Recovery source has no force kill, stop, connect, adoption, or Scheduler mutation' {
     $source=Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\PriorBootOwnership.psm1') -Raw
     Assert ($source -notmatch '(?i)Stop-Process|taskkill|\.Kill\(|Stop-ScheduledTask|Register-ScheduledTask|runtimes (connect|stop)')

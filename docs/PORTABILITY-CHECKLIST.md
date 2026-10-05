@@ -34,7 +34,7 @@
 
 ## Required before friend install
 
-- [ ] Bind settings + qualified Codexless release/build identity to each owner generation and revalidate it throughout prior-boot recovery.
+- [x] Bind settings + qualified Codexless release/build identity to each owner generation and revalidate it throughout prior-boot recovery.
 - [x] Reproduce the qualified Codexless npm production dependency closure from its frozen shrinkwrap and control inherited NODE_OPTIONS.
 - [ ] Qualify the distributable Node runtime binary/version and tunnel-client binary/version/provenance.
 - [ ] Establish exact tunnel launch provenance before re-enabling automatic `runtimes connect`.

@@ -1,6 +1,7 @@
 Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1')
 Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1')
+Import-Module (Join-Path $PSScriptRoot 'GenerationIdentity.psm1')
 
 function ConvertTo-ReceiptUtc($Value) {
     # v1 CIM receipts have 1-7 fractional digits, depending on the writing runtime.
@@ -57,6 +58,7 @@ function Get-PriorBootEvidence($Definition,$Config,$Tunnels,[DateTime]$Boot) {
     }
     $owner = $records['task-owner.json']
     if ($null -eq $owner -or $owner.version -ne 1 -or $owner.userSid -cne $Definition.UserSid -or $owner.taskName -cne $Definition.Name -or $owner.hostScript -cne $Definition.HostScript -or $owner.launcherDirectory -cne $launcher) { throw 'RECOVERY_OWNER_INVALID' }
+    Assert-CompanionGenerationContract $owner.generationContract $Config
     $created = ConvertTo-ReceiptUtc $owner.createdAt
     if ($created -ge $Boot) { throw 'RECOVERY_SAME_BOOT' }
     foreach ($name in @($records.Keys)) {
@@ -194,6 +196,7 @@ function Invoke-PriorBootOwnership {
         # The second observation may have taken time. Recheck every byte (including
         # the old cleanup marker) before replacing that marker with our own fence.
         $final = Get-PriorBootEvidence $Definition $cfg $tunnels $boot
+        Assert-CompanionGenerationContract $final.owner.generationContract (Get-CompanionConfig $launcher)
         if ($evidence.raw.Count -ne $final.raw.Count -or [IO.File]::ReadAllText($settingsPath) -cne $settingsText) { throw 'RECOVERY_EVIDENCE_CHANGED' }
         foreach ($name in $evidence.raw.Keys) { if (!$final.raw.ContainsKey($name) -or $evidence.raw[$name] -cne $final.raw[$name]) { throw 'RECOVERY_EVIDENCE_CHANGED' } }
         if ($CheckOnly) { return }

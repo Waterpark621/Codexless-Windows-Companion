@@ -99,7 +99,6 @@ $plan=[pscustomobject]@{
     port=$Port
     tunnel=$tunnelPlan
     blockers=@(
-        'generation-bound prior-boot release identity',
         'tunnel launch provenance',
         'repair/uninstall/update rollback',
         'clean second-user/machine acceptance'

@@ -2,6 +2,7 @@ param([Parameter(Mandatory=$true)] [string]$LauncherDirectory, [Parameter(Mandat
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'WindowsTaskAdapter.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'GenerationIdentity.psm1') -Force
 if ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -cne $UserSid) { throw 'TASK_OWNER_INVALID' }
 Assert-HouseholdPrincipal $UserSid (Get-Acl -LiteralPath (Join-Path $LauncherDirectory 'settings.json') -ErrorAction Stop).GetOwner([Security.Principal.SecurityIdentifier]).Value
 $definition = New-HouseholdTaskDefinition -UserSid $UserSid -LauncherDirectory $LauncherDirectory -HostScript $PSCommandPath -PowerShellExe (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe')
@@ -34,7 +35,8 @@ try {
     }
     if ($state.hostPresent -or $state.listenerPresent -or $state.tunnelPresent) { throw 'HOUSEHOLD_MIGRATION_REQUIRED: Existing processes were not adopted.' }
     $identity = $taskIdentity
-    $receipt = [ordered]@{ version=1; pid=$PID; createdAt=$identity.createdAt; userSid=$UserSid; taskName=$definition.Name; hostScript=$definition.HostScript; launcherDirectory=$definition.LauncherDirectory }
+    $generationContract=Get-CompanionGenerationContract (Get-CompanionConfig $definition.LauncherDirectory)
+    $receipt = [ordered]@{ version=1; pid=$PID; createdAt=$identity.createdAt; userSid=$UserSid; taskName=$definition.Name; hostScript=$definition.HostScript; launcherDirectory=$definition.LauncherDirectory; generationContract=$generationContract }
     $temp = "$receiptFile.$PID.tmp"
     $receipt | ConvertTo-Json | Set-Content -LiteralPath $temp -Encoding utf8
     Move-Item -LiteralPath $temp -Destination $receiptFile -Force

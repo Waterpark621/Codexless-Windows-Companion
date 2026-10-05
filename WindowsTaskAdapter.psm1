@@ -3,6 +3,7 @@ Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1')
 Import-Module (Join-Path $PSScriptRoot 'PrivateConsole.psm1')
 Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1')
 Import-Module (Join-Path $PSScriptRoot 'PriorBootOwnership.psm1')
+Import-Module (Join-Path $PSScriptRoot 'GenerationIdentity.psm1')
 
 function Get-ProcessIdentity {
     param([int]$ProcessId)
@@ -56,6 +57,7 @@ function Get-HouseholdRuntimeState {
         if ([int]::TryParse((Get-Content -LiteralPath $hostPidFile -Raw).Trim(),[ref]$hostProcessId)) { $hostIdentity = Get-ProcessIdentity $hostProcessId }
     }
     $ownerVerified = Test-HouseholdOwnerIdentity $receipt $hostIdentity $Definition
+    if($ownerVerified){try{Assert-CompanionGenerationContract $receipt.generationContract $cfg}catch{$ownerVerified=$false}}
     $cleanupState = Get-HouseholdCleanupState $launcher
     $evidencePresent = Test-HouseholdOwnershipEvidence $launcher
     # Retained receipts fence recovery even if writing the degraded marker itself failed.

@@ -6,6 +6,7 @@ Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'PrivateConsole.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'VerifiedTunnel.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'GenerationIdentity.psm1') -Force
 
 $script:HostPidPath=Join-Path $LauncherDirectory 'host.pid'
 $script:CodexlessPidPath=Join-Path $LauncherDirectory 'codexless.pid'
@@ -16,12 +17,16 @@ $script:SettingsPath=Join-Path $LauncherDirectory 'settings.json'
 $script:InitialSettingsText=[IO.File]::ReadAllText($script:SettingsPath)
 $script:InitialConfig=Get-CompanionConfig $LauncherDirectory
 $script:InitialReleaseBuildId=[string]$script:InitialConfig.release.buildId
+$script:InitialGenerationContract=Get-CompanionGenerationContract $script:InitialConfig
+$generationOwner=Get-Content -LiteralPath (Join-Path $LauncherDirectory 'task-owner.json') -Raw | ConvertFrom-Json
+Assert-CompanionGenerationContract $generationOwner.generationContract $script:InitialConfig
 $script:HouseholdWorkingDirectory=[string]$script:InitialConfig.projectPath
 
 function Get-LauncherConfig {
     $currentText=[IO.File]::ReadAllText($script:SettingsPath)
     if ($currentText -cne $script:InitialSettingsText) { throw 'HOUSEHOLD_SETTINGS_CHANGED: Stop the Companion before changing settings.' }
     $cfg=Get-CompanionConfig $LauncherDirectory
+    Assert-CompanionGenerationContract $script:InitialGenerationContract $cfg
     if ([string]$cfg.release.buildId -cne $script:InitialReleaseBuildId) { throw 'HOUSEHOLD_RELEASE_CHANGED: Stop the Companion before changing the Codexless release.' }
     $cfg
 }

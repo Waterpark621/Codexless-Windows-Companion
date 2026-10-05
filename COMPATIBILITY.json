@@ -35,9 +35,9 @@
     "qualifiedCodexlessBindingImplemented": true,
     "exactReadinessIdentityImplemented": true,
     "nodeOptionsSanitizedBeforeLaunch": true,
+    "generationBoundRecoveryImplemented": true,
     "friendInstallReady": false,
     "remainingBlockers": [
-      "generation-bound prior-boot release identity",
       "tunnel launch provenance",
       "repair/uninstall/update rollback flows",
       "download provenance and distributable Node/tunnel binary qualification",

@@ -38,7 +38,7 @@ if($plan.codexless.buildId -cne ('b'*64)){throw 'wrong release build'}
 if($plan.codexless.sourceRevision -cne ('c'*40)){throw 'wrong release source'}
 if($plan.codexless.manifestSha256 -cne ('d'*64)){throw 'wrong release manifest'}
 if(@($plan.blockers) -contains 'qualified release/build trust binding'){throw 'qualified release blocker should be removed'}
-if(@($plan.blockers) -notcontains 'generation-bound prior-boot release identity'){throw 'generation binding blocker missing'}
+if(@($plan.blockers) -contains 'generation-bound prior-boot release identity'){throw 'completed generation binding blocker should be removed'}
 if($plan.tunnel.enabled -ne $false){throw 'tunnel should be disabled'}
 if(Test-Path -LiteralPath $destination){throw 'PlanOnly mutated destination'}
 
