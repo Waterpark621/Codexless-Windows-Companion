@@ -13,6 +13,9 @@ param(
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 
+Import-Module (Join-Path $PSScriptRoot 'ArtifactProvenance.psm1') -Force -DisableNameChecking
+if(!$PlanOnly){[void](Get-ArtifactPolicy codexless)}
+
 function Resolve-InputPath {
     param([string]$Value,[string]$Label,[ValidateSet('File','Directory')][string]$Kind)
     if([string]::IsNullOrWhiteSpace($Value) -or $Value -notmatch '^[A-Za-z]:[\\/]'){
@@ -53,6 +56,7 @@ $installDirectory=if($installFull.Length -gt $installDriveRoot.Length){
 
 Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1') -Force
 $release=Get-CodexlessReleaseIdentity $codexlessRoot
+$distributionBinding=Get-CodexlessDistributionBinding
 
 if([string]::IsNullOrWhiteSpace($NodeExe)){
     $node=(Get-Command node.exe -ErrorAction Stop)
@@ -92,6 +96,8 @@ $plan=[pscustomobject]@{
         sourceRevision=$release.sourceRevision
         manifestSha256=$release.manifestSha256
         hostContractVersion=$release.hostContractVersion
+        distributionState=$distributionBinding.state
+        publicationRequiredFields=@($distributionBinding.publicationRequiredFields)
         root=$release.root
     }
     projectPath=$projectPath

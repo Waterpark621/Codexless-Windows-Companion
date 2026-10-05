@@ -15,6 +15,7 @@
     "distribution": "Waterpark621/Codexless",
     "qualifiedRelease": {
       "version": "0.1.2-preview.1",
+      "candidateHead": "1bc8b5f6f45b88cc4bc311604178407992bcc9d2",
       "buildId": "7e416d0f32e67cffa6af1ba9ea4339dc738fdc86115263336229cc9fd46c8308",
       "sourceRevision": "1da3cb5b8563370f3656c831d17a1c73354df282",
       "manifestSha256": "14583de39b1218ff44477b62519f7cc6351ec7c33259cf24c334ef0ed5cccb9d"
@@ -34,6 +35,8 @@
     "doctorImplemented": true,
     "doctorAcceptanceV1Implemented": true,
     "qualifiedCodexlessBindingImplemented": true,
+    "codexlessDistributionBindingImplemented": true,
+    "codexlessPublicArtifactBound": false,
     "exactReadinessIdentityImplemented": true,
     "nodeOptionsSanitizedBeforeLaunch": true,
     "generationBoundRecoveryImplemented": true,
@@ -42,7 +45,7 @@
     "boundedNativeSubstrateImplemented": true,
     "friendInstallReady": false,
     "remainingBlockers": [
-      "qualified Codexless remote distribution binding",
+      "publish exact Codexless 0.1.2-preview.1 archive and bind immutable URL, archive filename, and SHA-256",
       "native transactional install/repair/uninstall/update adapter qualification",
       "clean second-user/machine and Windows security-policy acceptance"
     ],

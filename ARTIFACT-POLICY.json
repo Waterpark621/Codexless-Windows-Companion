@@ -13,7 +13,33 @@
     "maxExpandedBytes": 536870912,
     "maxEntries": 10000
   },
-  "codexless": null,
+  "codexless": {
+    "role": "codexless",
+    "state": "unpublished",
+    "version": "0.1.2-preview.1",
+    "candidateHead": "1bc8b5f6f45b88cc4bc311604178407992bcc9d2",
+    "buildId": "7e416d0f32e67cffa6af1ba9ea4339dc738fdc86115263336229cc9fd46c8308",
+    "sourceRevision": "1da3cb5b8563370f3656c831d17a1c73354df282",
+    "releaseManifestSha256": "14583de39b1218ff44477b62519f7cc6351ec7c33259cf24c334ef0ed5cccb9d",
+    "hostContractVersion": "codexless-public-preview-v1",
+    "url": null,
+    "archiveFileName": null,
+    "sha256": null,
+    "archiveType": "zip",
+    "payloadRootRelativePath": ".",
+    "releaseManifestRelativePath": "config/release-manifest.json",
+    "launchScriptRelativePath": "scripts/launch.mjs",
+    "requireManifestFileClosure": true,
+    "maxArchiveBytes": 268435456,
+    "maxExpandedBytes": 1073741824,
+    "maxEntries": 10000,
+    "publicationRequiredFields": [
+      "state=published",
+      "url",
+      "archiveFileName",
+      "sha256"
+    ]
+  },
   "tunnel": {
     "role": "tunnel",
     "version": "0.0.14",

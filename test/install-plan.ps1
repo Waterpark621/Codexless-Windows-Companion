@@ -12,6 +12,10 @@ New-Item -ItemType Directory -Force -Path $release,$project|Out-Null
 $node=(Get-Command node.exe -ErrorAction Stop).Source
 $fixtureScript=Join-Path $fixture 'Install.fixture.ps1'
 $source=Get-Content -LiteralPath (Join-Path $repo 'Install.ps1') -Raw
+$artifactImport="Import-Module (Join-Path `$PSScriptRoot 'ArtifactProvenance.psm1') -Force -DisableNameChecking"
+$artifactPath=(Join-Path $repo 'ArtifactProvenance.psm1').Replace("'","''")
+if(([regex]::Matches($source,[regex]::Escape($artifactImport))).Count -ne 1){throw 'artifact import fixture target drifted'}
+$source=$source.Replace($artifactImport,("Import-Module '"+$artifactPath+"' -Force -DisableNameChecking"))
 $target=@'
 Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1') -Force
 $release=Get-CodexlessReleaseIdentity $codexlessRoot
@@ -37,6 +41,8 @@ if($plan.installDirectory -cne [IO.Path]::GetFullPath($destination)){throw 'wron
 if($plan.codexless.buildId -cne ('b'*64)){throw 'wrong release build'}
 if($plan.codexless.sourceRevision -cne ('c'*40)){throw 'wrong release source'}
 if($plan.codexless.manifestSha256 -cne ('d'*64)){throw 'wrong release manifest'}
+if($plan.codexless.distributionState -cne 'unpublished'){throw 'wrong Codexless distribution state'}
+if((@($plan.codexless.publicationRequiredFields) -join '|') -cne 'state=published|url|archiveFileName|sha256'){throw 'wrong Codexless publication field contract'}
 if(@($plan.blockers) -contains 'qualified release/build trust binding'){throw 'qualified release blocker should be removed'}
 if(@($plan.blockers) -contains 'generation-bound prior-boot release identity'){throw 'completed generation binding blocker should be removed'}
 if($plan.tunnel.enabled -ne $false){throw 'tunnel should be disabled'}
@@ -61,7 +67,7 @@ try {
     $ErrorActionPreference=$previousErrorAction
 }
 if($blockedExit -eq 0){throw 'mutating preview install unexpectedly succeeded'}
-if(($blockedOutput|Out-String) -notmatch 'INSTALL_DISABLED_PUBLIC_PREVIEW'){throw 'missing preview refusal code'}
+if(($blockedOutput|Out-String) -notmatch 'PROVENANCE_POLICY_UNBOUND'){throw 'missing unpublished Codexless distribution refusal'}
 if(Test-Path -LiteralPath $blockedDestination){throw 'refused preview install mutated destination'}
 
 $unqualified=Join-Path $fixture 'unqualified'
