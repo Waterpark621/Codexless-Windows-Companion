@@ -89,6 +89,8 @@ $plan=[pscustomobject]@{
     codexless=[pscustomobject]@{
         version=$release.version
         buildId=$release.buildId
+        sourceRevision=$release.sourceRevision
+        manifestSha256=$release.manifestSha256
         hostContractVersion=$release.hostContractVersion
         root=$release.root
     }
@@ -97,8 +99,7 @@ $plan=[pscustomobject]@{
     port=$Port
     tunnel=$tunnelPlan
     blockers=@(
-        'qualified release/build trust binding',
-        'bounded Browser ownership acceptance',
+        'generation-bound prior-boot release identity',
         'tunnel launch provenance',
         'repair/uninstall/update rollback',
         'clean second-user/machine acceptance'

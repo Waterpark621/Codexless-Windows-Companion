@@ -16,10 +16,11 @@ The old machine-certified launcher adapter has been removed from this public tre
 The Companion now binds to an explicit destination-machine settings file and a qualified Codexless release:
 
 - settings.json provides the selected project directory, Codexless release root, Node executable/port, and optional local tunnel configuration.
-- config/release-manifest.json inside the selected Codexless release supplies product/version/build/host-contract identity.
-- critical launch/runtime files are checked against that manifest before use.
-- Codexless starts directly through its supported scripts/launch.mjs http entrypoint.
-- readiness is checked through /readyz and must match the expected Codexless version and public surface.
+- config/release-manifest.json inside the selected Codexless release supplies product/version/build/source/host-contract identity.
+- this preview is pinned to Waterpark621/Codexless 0.1.2-preview.1, build 7e416d0f32e67cffa6af1ba9ea4339dc738fdc86115263336229cc9fd46c8308, source 1da3cb5b8563370f3656c831d17a1c73354df282.
+- the exact qualified manifest bytes and every manifest-controlled release file are hash-checked before use.
+- Codexless starts directly through its supported scripts/launch.mjs http entrypoint after the Companion removes inherited NODE_OPTIONS from the child environment; the qualified Codexless launcher independently rejects non-empty NODE_OPTIONS.
+- readiness is checked through /readyz and must match the exact expected version, public surface, build ID, and source revision; readiness containing defaultCwd is rejected.
 - settings and selected release build are immutable for one running owner generation; updates stop the owner first.
 
 No external Core.ps1, Host.ps1, AST-derived working directory, copied runtime quartet, or machine-specific Browser snapshot ID is part of this public contract.
@@ -60,7 +61,7 @@ The intended supported flow is:
 9. retain one rollback generation;
 10. survive Desktop close/reopen and Windows reboot in the supported logged-in-user model.
 
-`Install.ps1` is intentionally **plan-only in this public preview**. `-PlanOnly` validates the proposed destination and selected dependencies; invoking it without `-PlanOnly` fails before any file, task, process, or credential mutation. Automatic tunnel connect is also disabled until exact launch provenance is qualified. The DPAPI credential design remains fixture-tested, but the preview installer does not collect or store a runtime key. `Doctor.ps1` now requires direct listener ancestry, exact tunnel ownership receipts when a tunnel is configured, Codexless `/readyz` release identity, and a read-only `codex.browser_status` MCP probe with at least one supported connected Browser backend. Required checks no longer pass as `PENDING`; Doctor returns `PASS`, `DEGRADED`, or `FAIL`. Qualified release/build binding, repair/update/uninstall, provenance, and clean-machine acceptance remain release gates.
+`Install.ps1` is intentionally **plan-only in this public preview**. `-PlanOnly` validates the proposed destination and selected dependencies; invoking it without `-PlanOnly` fails before any file, task, process, or credential mutation. Automatic tunnel connect is also disabled until exact launch provenance is qualified. The DPAPI credential design remains fixture-tested, but the preview installer does not collect or store a runtime key. `Doctor.ps1` now requires direct listener ancestry, exact tunnel ownership receipts when a tunnel is configured, Codexless `/readyz` release identity, and a read-only `codex.browser_status` MCP probe with at least one supported connected Browser backend. Required checks no longer pass as `PENDING`; Doctor returns `PASS`, `DEGRADED`, or `FAIL`. Exact Codexless release/build/source binding is now implemented for the qualified 0.1.2-preview.1 candidate. Generation-bound recovery identity, Node/tunnel/download provenance, repair/update/uninstall, and clean-machine acceptance remain release gates.
 
 ## Development rule
 

@@ -13,7 +13,12 @@
   },
   "codexless": {
     "distribution": "Waterpark621/Codexless",
-    "qualifiedRelease": null,
+    "qualifiedRelease": {
+      "version": "0.1.2-preview.1",
+      "buildId": "7e416d0f32e67cffa6af1ba9ea4339dc738fdc86115263336229cc9fd46c8308",
+      "sourceRevision": "1da3cb5b8563370f3656c831d17a1c73354df282",
+      "manifestSha256": "14583de39b1218ff44477b62519f7cc6351ec7c33259cf24c334ef0ed5cccb9d"
+    },
     "hostContractVersion": "codexless-public-preview-v1"
   },
   "tunnelClient": {
@@ -27,13 +32,15 @@
     "automaticTunnelConnectEnabled": false,
     "doctorImplemented": true,
     "doctorAcceptanceV1Implemented": true,
+    "qualifiedCodexlessBindingImplemented": true,
+    "exactReadinessIdentityImplemented": true,
+    "nodeOptionsSanitizedBeforeLaunch": true,
     "friendInstallReady": false,
     "remainingBlockers": [
-      "qualified release/build trust binding",
       "generation-bound prior-boot release identity",
       "tunnel launch provenance",
       "repair/uninstall/update rollback flows",
-      "dependency and download provenance",
+      "download provenance and distributable Node/tunnel binary qualification",
       "clean second-user/machine acceptance"
     ]
   }

@@ -1,6 +1,12 @@
 Set-StrictMode -Version Latest
 
 $script:SupportedHostContractVersion = 'codexless-public-preview-v1'
+$script:QualifiedCodexlessRelease = [pscustomobject]@{
+    version='0.1.2-preview.1'
+    buildId='7e416d0f32e67cffa6af1ba9ea4339dc738fdc86115263336229cc9fd46c8308'
+    sourceRevision='1da3cb5b8563370f3656c831d17a1c73354df282'
+    manifestSha256='14583de39b1218ff44477b62519f7cc6351ec7c33259cf24c334ef0ed5cccb9d'
+}
 
 function Get-RequiredProperty {
     param($Object,[string]$Name,[string]$Label)
@@ -33,17 +39,70 @@ function Get-ReleaseFileEntry {
     $entries[0]
 }
 
+function Assert-ReleaseRelativePath {
+    param([string]$RelativePath)
+    if ([string]::IsNullOrWhiteSpace($RelativePath) -or
+        $RelativePath.Contains('\') -or
+        $RelativePath.StartsWith('/') -or
+        $RelativePath.EndsWith('/') -or
+        $RelativePath.Contains('//')) {
+        throw 'CODEXLESS_RELEASE_INVALID: Unsafe release path.'
+    }
+    foreach($segment in $RelativePath.Split('/')){
+        if([string]::IsNullOrWhiteSpace($segment) -or $segment -eq '.' -or $segment -eq '..'){
+            throw 'CODEXLESS_RELEASE_INVALID: Unsafe release path.'
+        }
+    }
+    $RelativePath
+}
+
 function Assert-CodexlessReleaseFile {
     param([string]$Root,$Manifest,[string]$RelativePath)
-    if ($RelativePath.Contains('..') -or $RelativePath.StartsWith('/') -or $RelativePath.StartsWith('\')) { throw 'CODEXLESS_RELEASE_INVALID: Unsafe release path.' }
-    $entry=Get-ReleaseFileEntry $Manifest $RelativePath
-    $path=Join-Path $Root ($RelativePath.Replace('/','\'))
-    if (!(Test-Path -LiteralPath $path -PathType Leaf)) { throw "CODEXLESS_RELEASE_INVALID: Missing $RelativePath." }
-    if ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "CODEXLESS_RELEASE_INVALID: Reparse point $RelativePath is not accepted." }
+    $safeRelative=Assert-ReleaseRelativePath $RelativePath
+    $entry=Get-ReleaseFileEntry $Manifest $safeRelative
+    $path=Join-Path $Root ($safeRelative.Replace('/','\'))
+    if (!(Test-Path -LiteralPath $path -PathType Leaf)) { throw "CODEXLESS_RELEASE_INVALID: Missing $safeRelative." }
+    if ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "CODEXLESS_RELEASE_INVALID: Reparse point $safeRelative is not accepted." }
     if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne ([string]$entry.sha256).ToLowerInvariant()) {
-        throw "CODEXLESS_RELEASE_INVALID: File hash mismatch for $RelativePath."
+        throw "CODEXLESS_RELEASE_INVALID: File hash mismatch for $safeRelative."
     }
     $path
+}
+
+function Read-CodexlessReleaseManifestSnapshot {
+    param([string]$ManifestPath)
+    try {
+        $bytes=[IO.File]::ReadAllBytes($ManifestPath)
+    } catch {
+        throw 'CODEXLESS_RELEASE_INVALID: Release manifest is unreadable.'
+    }
+
+    $sha=[Security.Cryptography.SHA256]::Create()
+    try {
+        $manifestSha=([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-','').ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+
+    try {
+        $utf8=[Text.UTF8Encoding]::new($false,$true)
+        $offset=0
+        if($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF){
+            $offset=3
+        }
+        $json=$utf8.GetString($bytes,$offset,$bytes.Length-$offset)
+        $manifest=$json | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        throw 'CODEXLESS_RELEASE_INVALID: Release manifest is unreadable.'
+    } finally {
+        $json=$null
+        $bytes=$null
+    }
+
+    [pscustomobject]@{
+        sha256=$manifestSha
+        manifest=$manifest
+    }
 }
 
 function Get-CodexlessReleaseIdentity {
@@ -51,26 +110,50 @@ function Get-CodexlessReleaseIdentity {
     $rootPath=Resolve-CompanionLocalPath $Root 'codexless.root' Directory -MustExist
     $manifestPath=Join-Path $rootPath 'config\release-manifest.json'
     if (!(Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw 'CODEXLESS_RELEASE_INVALID: Release manifest is missing.' }
-    try { $manifest=Get-Content -LiteralPath $manifestPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop }
-    catch { throw 'CODEXLESS_RELEASE_INVALID: Release manifest is unreadable.' }
-    if ($manifest.manifestVersion -ne 1 -or $manifest.productId -cne 'codexless' -or [string]::IsNullOrWhiteSpace([string]$manifest.version) -or
-        [string]$manifest.buildId -cnotmatch '^[0-9a-f]{64}$' -or [string]$manifest.hostContractVersion -cne $script:SupportedHostContractVersion -or
-        $manifest.files -isnot [System.Array]) {
+    if ((Get-Item -LiteralPath $manifestPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'CODEXLESS_RELEASE_INVALID: Release manifest reparse points are not accepted.' }
+
+    $snapshot=Read-CodexlessReleaseManifestSnapshot $manifestPath
+    $manifestSha=[string]$snapshot.sha256
+    if($manifestSha -cne [string]$script:QualifiedCodexlessRelease.manifestSha256){
+        throw 'CODEXLESS_RELEASE_INVALID: Release manifest is not the qualified Companion build.'
+    }
+    $manifest=$snapshot.manifest
+
+    if ($manifest.manifestVersion -ne 1 -or
+        $manifest.productId -cne 'codexless' -or
+        [string]$manifest.version -cne [string]$script:QualifiedCodexlessRelease.version -or
+        [string]$manifest.buildId -cne [string]$script:QualifiedCodexlessRelease.buildId -or
+        [string]$manifest.sourceRevision -cne [string]$script:QualifiedCodexlessRelease.sourceRevision -or
+        [string]$manifest.hostContractVersion -cne $script:SupportedHostContractVersion -or
+        $manifest.files -isnot [System.Array] -or
+        @($manifest.files).Count -lt 1) {
         throw 'CODEXLESS_RELEASE_INVALID: Unsupported release identity or host contract.'
     }
-    $critical=@('scripts/launch.mjs','src/mcp-http-public.mjs','src/codexless-runtime.mjs','package.json')
-    $paths=@{}
-    foreach($relative in $critical){$paths[$relative]=Assert-CodexlessReleaseFile $rootPath $manifest $relative}
+
+    $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach($entry in @($manifest.files)){
+        if($null -eq $entry -or !$entry.PSObject.Properties['path'] -or !$entry.PSObject.Properties['sha256']){
+            throw 'CODEXLESS_RELEASE_INVALID: Manifest file entry is incomplete.'
+        }
+        $relative=Assert-ReleaseRelativePath ([string]$entry.path)
+        if(!$seen.Add($relative)){throw 'CODEXLESS_RELEASE_INVALID: Duplicate manifest release path.'}
+        if([string]$entry.sha256 -cnotmatch '^[0-9a-f]{64}$'){throw 'CODEXLESS_RELEASE_INVALID: Invalid manifest file hash.'}
+        [void](Assert-CodexlessReleaseFile $rootPath $manifest $relative)
+    }
+
+    [void](Get-ReleaseFileEntry $manifest 'scripts/launch.mjs')
     [pscustomobject]@{
         productId='codexless'
         version=[string]$manifest.version
-        buildId=([string]$manifest.buildId).ToLowerInvariant()
+        buildId=[string]$manifest.buildId
+        sourceRevision=[string]$manifest.sourceRevision
+        manifestSha256=$manifestSha
+        fileCount=@($manifest.files).Count
         hostContractVersion=[string]$manifest.hostContractVersion
         root=$rootPath
-        launchScript=$paths['scripts/launch.mjs']
+        launchScript=(Join-Path $rootPath 'scripts\launch.mjs')
     }
 }
-
 function Assert-PathWithinRoot {
     param([string]$Root,[string]$Path,[string]$Label)
     $rootPath=[IO.Path]::GetFullPath($Root).TrimEnd('\')+'\'
@@ -191,9 +274,15 @@ function Test-CodexlessReady {
         $body=$reader.ReadToEnd()
         if ($body.Length -gt 65536) { return $false }
         $ready=$body|ConvertFrom-Json
-        ($ready.ok -eq $true -and $ready.service -ceq 'codexless-public' -and
+        ($ready.ok -eq $true -and
+         $ready.service -ceq 'codexless-public' -and
+         $ready.transport -ceq 'streamable-http' -and
+         $ready.publicPreview -eq $true -and
          [string]$ready.version -ceq [string]$Config.release.version -and
-         [string]$ready.surfaceVersion -ceq [string]$Config.release.hostContractVersion)
+         [string]$ready.surfaceVersion -ceq [string]$Config.release.hostContractVersion -and
+         [string]$ready.buildId -ceq [string]$Config.release.buildId -and
+         [string]$ready.sourceRevision -ceq [string]$Config.release.sourceRevision -and
+         !$ready.PSObject.Properties['defaultCwd'])
     } catch { $false }
     finally {
         if($null -ne $reader){$reader.Dispose()}
@@ -209,7 +298,7 @@ function Get-CodexlessPrivateConsoleCommand {
     $port=[int]$Config.port
     if ($port -lt 1 -or $port -gt 65535) { throw 'COMPANION_SETTINGS_INVALID: Invalid launch port.' }
     $d=[char]36
-    $d+"env:CODEX_TOOLBOX_PUBLIC_PORT='$port'; & '$node' '$launch' http; exit "+$d+'LASTEXITCODE'
+    $d+"hadNodeOptions=Test-Path Env:NODE_OPTIONS; "+$d+"previousNodeOptions=if("+$d+"hadNodeOptions){[string]"+$d+"env:NODE_OPTIONS}else{"+$d+"null}; Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue; "+$d+"env:CODEX_TOOLBOX_PUBLIC_PORT='$port'; try { & '$node' '$launch' http; "+$d+"exitCode="+$d+"LASTEXITCODE } finally { if("+$d+"hadNodeOptions){"+$d+"env:NODE_OPTIONS="+$d+"previousNodeOptions}else{Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue}; "+$d+"previousNodeOptions="+$d+"null }; exit "+$d+"exitCode"
 }
 
 function Get-TunnelStatus {

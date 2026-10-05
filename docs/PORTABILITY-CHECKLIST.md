@@ -13,8 +13,9 @@
 - [x] Removed verified local runtime/binary wrapper binding.
 - [x] Added explicit destination-machine settings schema.
 - [x] Added release-manifest/host-contract validation.
-- [x] Launch Codexless directly through scripts/launch.mjs http.
-- [x] Bind readiness to /readyz, release version, and public surface.
+- [x] Bind Companion to one exact qualified Codexless version/build/source plus exact manifest bytes and every manifest-controlled file hash.
+- [x] Launch Codexless directly through scripts/launch.mjs http after removing inherited NODE_OPTIONS.
+- [x] Bind readiness to /readyz exact version, public surface, build ID and source revision; reject defaultCwd metadata.
 - [x] Preserve same-boot fail-closed and verified prior-boot recovery.
 
 ## Public-preview safety gate
@@ -34,7 +35,8 @@
 ## Required before friend install
 
 - [ ] Bind settings + qualified Codexless release/build identity to each owner generation and revalidate it throughout prior-boot recovery.
-- [ ] Qualify the Codexless dependency closure, Node runtime and tunnel-client binary/version; control inherited Node startup options.
+- [x] Reproduce the qualified Codexless npm production dependency closure from its frozen shrinkwrap and control inherited NODE_OPTIONS.
+- [ ] Qualify the distributable Node runtime binary/version and tunnel-client binary/version/provenance.
 - [ ] Establish exact tunnel launch provenance before re-enabling automatic `runtimes connect`.
 - [ ] Add bounded native tunnel status/connect/stop execution.
 - [ ] Add an incomplete-install fence plus ownership-verified repair/uninstall.
