@@ -19,6 +19,90 @@ namespace Codexless {
     public uint FileIndexHigh;
     public uint FileIndexLow;
   }
+  // Pin every directory from the volume root down, opening each component without
+  // following reparses. Ancestors deny write/delete sharing; the destination
+  // denies delete sharing. Its necessary write sharing is safe because promotion
+  // uses that exact directory handle with a single-component relative name.
+  public sealed class TransactionDirectoryAuthority : IDisposable {
+    readonly System.Collections.Generic.List<Microsoft.Win32.SafeHandles.SafeFileHandle> held =
+      new System.Collections.Generic.List<Microsoft.Win32.SafeHandles.SafeFileHandle>();
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    static extern Microsoft.Win32.SafeHandles.SafeFileHandle CreateFileW(string path,
+      uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError=true)]
+    static extern bool GetFileInformationByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle handle,
+      out TransactionByHandleFileInformation info);
+    void Pin(string path, bool leaf) {
+      var handle=CreateFileW(path,0x80000000,leaf ? 3u : 1u,IntPtr.Zero,3,0x02200000,IntPtr.Zero);
+      if(handle.IsInvalid) {
+        int error=Marshal.GetLastWin32Error(); handle.Dispose();
+        throw new System.IO.IOException("TRANSACTION_DIRECTORY_AUTHORITY_UNAVAILABLE",new System.ComponentModel.Win32Exception(error));
+      }
+      held.Add(handle);
+      TransactionByHandleFileInformation info;
+      if(!GetFileInformationByHandle(handle,out info))
+        throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+      if((info.FileAttributes & 0x400)!=0 || (info.FileAttributes & 0x10)==0)
+        throw new System.IO.IOException("TRANSACTION_REPARSE_POINT");
+    }
+    public static TransactionDirectoryAuthority Acquire(string path, bool createLeaf) {
+      string full=System.IO.Path.GetFullPath(path);
+      if(full.Length<4 || full[1]!=':' || full[2]!='\\' || full.Substring(2).Contains(":"))
+        throw new System.IO.IOException("TRANSACTION_ROOT_INVALID");
+      var authority=new TransactionDirectoryAuthority();
+      try {
+        string cursor=System.IO.Path.GetPathRoot(full);
+        authority.Pin(cursor,false);
+        string[] parts=full.Substring(cursor.Length).Split(new char[]{'\\'},StringSplitOptions.RemoveEmptyEntries);
+        for(int index=0;index<parts.Length;index++) {
+          cursor=System.IO.Path.Combine(cursor,parts[index]);
+          // Only the leaf may be created, and its parent is already held. An
+          // attacker winning creation is inspected without following its link.
+          if(createLeaf && index==parts.Length-1 && !System.IO.Directory.Exists(cursor))
+            System.IO.Directory.CreateDirectory(cursor);
+          authority.Pin(cursor,index==parts.Length-1);
+        }
+        return authority;
+      } catch { authority.Dispose(); throw; }
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    struct IoStatusBlock { public IntPtr Status; public UIntPtr Information; }
+    [DllImport("ntdll.dll")]
+    static extern int NtSetInformationFile(Microsoft.Win32.SafeHandles.SafeFileHandle handle,
+      out IoStatusBlock io, IntPtr data, uint size, int kind);
+    [DllImport("ntdll.dll")]
+    static extern uint RtlNtStatusToDosError(int status);
+    public void Promote(string stage, string generationId) {
+      if(!System.Text.RegularExpressions.Regex.IsMatch(generationId,"^[0-9a-f]{32}$"))
+        throw new System.IO.IOException("TRANSACTION_GENERATION_INVALID");
+      using(var source=CreateFileW(stage,0x10000 | 0x80,7,IntPtr.Zero,3,0x02200000,IntPtr.Zero)) {
+        if(source.IsInvalid) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        TransactionByHandleFileInformation info;
+        if(!GetFileInformationByHandle(source,out info)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        if((info.FileAttributes & 0x400)!=0 || (info.FileAttributes & 0x10)==0)
+          throw new System.IO.IOException("TRANSACTION_REPARSE_POINT");
+        byte[] name=System.Text.Encoding.Unicode.GetBytes(generationId);
+        int rootOffset=IntPtr.Size==8 ? 8 : 4;
+        int lengthOffset=rootOffset+IntPtr.Size;
+        int nameOffset=lengthOffset+4;
+        int size=(IntPtr.Size==8 ? 32 : 16)+name.Length;
+        IntPtr data=Marshal.AllocHGlobal(size);
+        try {
+          Marshal.Copy(new byte[size],0,data,size);
+          Marshal.WriteIntPtr(data,rootOffset,held[held.Count-1].DangerousGetHandle());
+          Marshal.WriteInt32(data,lengthOffset,name.Length);
+          Marshal.Copy(name,0,IntPtr.Add(data,nameOffset),name.Length);
+          IoStatusBlock io;
+          int status=NtSetInformationFile(source,out io,data,(uint)size,10);
+          if(status<0) throw new System.ComponentModel.Win32Exception((int)RtlNtStatusToDosError(status));
+        } finally {Marshal.FreeHGlobal(data);}
+      }
+    }
+    public void Dispose() {
+      for(int index=held.Count-1;index>=0;index--) held[index].Dispose();
+      held.Clear();
+    }
+  }
   public static class TransactionFileIdentity {
     [DllImport("kernel32.dll", SetLastError=true)]
     static extern bool GetFileInformationByHandle(IntPtr hFile, out TransactionByHandleFileInformation info);
@@ -39,6 +123,21 @@ function Assert-TransactionRoot([string]$Root) {
  $cursor=$full
  while($cursor){if((Test-Path -LiteralPath $cursor) -and ((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'TRANSACTION_REPARSE_POINT'};$cursor=Split-Path $cursor -Parent}
  $full
+}
+function Move-TransactionGeneration([string]$Stage,[string]$Generations,[string]$GenerationId) {
+ if($GenerationId -cnotmatch '^[0-9a-f]{32}$'){throw 'TRANSACTION_GENERATION_INVALID'}
+ $authority=$null
+ try {
+  $authority=[Codexless.TransactionDirectoryAuthority]::Acquire($Generations,$true)
+  $generation=Join-Path $Generations $GenerationId
+  Assert-TransactionRoot $generation|Out-Null
+  if(Test-Path -LiteralPath $generation){throw 'TRANSACTION_GENERATION_COLLISION'}
+  # All destination ancestors remain pinned through the native relative rename.
+  # ReplaceIfExists=false refuses a raced target. RootDirectory is the held
+  # directory object; a late in-place junction cannot redirect payload outside.
+  $authority.Promote($Stage,$GenerationId)
+  Assert-TransactionRoot $generation|Out-Null
+ } finally {if($authority){$authority.Dispose()}}
 }
 function Get-TransactionOwnerDigest {
  $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
@@ -158,14 +257,8 @@ function Invoke-InstallTransactionCore {
  try{
   Set-TransactionStage $fence $fencePath 'promoting'
   $generations=Join-Path $root 'generations'
-  if(Test-Path -LiteralPath $generations){Assert-TransactionRoot $generations|Out-Null}
-  else{New-Item -ItemType Directory -Path $generations -ErrorAction Stop|Out-Null}
-  Assert-TransactionRoot $root|Out-Null;Assert-TransactionRoot $generations|Out-Null
   $generation=Join-Path $generations $id
-  if(Test-Path -LiteralPath $generation){throw 'TRANSACTION_GENERATION_COLLISION'}
-  Assert-TransactionRoot $generations|Out-Null
-  [IO.Directory]::Move($stage,$generation)
-  Assert-TransactionRoot $generation|Out-Null
+  Move-TransactionGeneration $stage $generations $id
   if((Get-TransactionTreeDigest $generation) -cne $digest -or !(& $Adapter.VerifyStage $generation)){throw 'invalid'}
   $record=[ordered]@{version=1;state='installed';transactionId=$id;generationId=$id;ownerDigest=$fence.ownerDigest;payloadSha256=$digest;rootDigest=(Get-TransactionBytesDigest ([Text.Encoding]::UTF8.GetBytes($root.ToLowerInvariant())))}
   Set-TransactionStage $fence $fencePath 'registering'
@@ -378,10 +471,7 @@ function Invoke-VerifiedIncompleteInstallRecoveryCore {
      } else {
       if(!(Test-Path -LiteralPath $stage -PathType Container) -or
          (Get-TransactionTreeDigest $stage) -cne $record.payloadSha256 -or !(& $Adapter.VerifyStage $stage)){throw 'recovery stage unavailable'}
-      if(Test-Path -LiteralPath $generations){Assert-TransactionRoot $generations|Out-Null}else{New-Item -ItemType Directory -Path $generations -ErrorAction Stop|Out-Null}
-      Assert-TransactionRoot $root|Out-Null;Assert-TransactionRoot $generations|Out-Null
-      [IO.Directory]::Move($stage,$generation)
-      Assert-TransactionRoot $generation|Out-Null
+      Move-TransactionGeneration $stage $generations ([string]$fence.generationId)
       if((Get-TransactionTreeDigest $generation) -cne $record.payloadSha256 -or !(& $Adapter.VerifyStage $generation)){throw 'promoted generation unproven'}
      }
      Set-TransactionStage $fence $fencePath 'registering'
