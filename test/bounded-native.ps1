@@ -8,6 +8,7 @@ $hash=(Get-FileHash -LiteralPath $node -Algorithm SHA256).Hash.ToLowerInvariant(
 $script=Join-Path $root 'fixture.mjs'
 [IO.File]::WriteAllText($script,@'
 const mode=process.argv[2];
+if(mode==='isolated') process.stdout.write(JSON.stringify({key:process.env.CONTROL_PLANE_API_KEY,state:process.env.TUNNEL_CLIENT_STATE_DIR,profile:process.env.TUNNEL_CLIENT_PROFILE_DIR,admin:process.env.OPENAI_ADMIN_KEY,api:process.env.OPENAI_API_KEY}));
 if(mode==='args') process.stdout.write(JSON.stringify(process.argv.slice(3)));
 if(mode==='env') process.stdout.write(String(process.env.NODE_OPTIONS===undefined));
 if(mode==='stdout') process.stdout.write('x'.repeat(200000));
@@ -26,4 +27,14 @@ foreach($mode in @('stdout','stderr')){Test "Bounded $mode overflow returns no r
 Test 'Nonzero exit is sanitized and preserves exit code' {$r=Run exit;Assert (!$r.Ok -and $r.ExitCode -eq 7 -and !$r.Stdout -and $r.Code -ceq 'NATIVE_EXIT_FAILED')}
 Test 'Timeout returns bounded indeterminate lifetime without force termination' {$clock=[Diagnostics.Stopwatch]::StartNew();$r=Run timeout 200;Assert ($r.TimedOut -and !$r.Ok -and $r.LifetimeMayRemain -and $r.ProcessId -gt 0 -and $r.CreatedAt -and !$r.Stdout);Assert ($clock.ElapsedMilliseconds -lt 1500);Start-Sleep -Milliseconds 1900;Assert ($null -eq (Get-Process -Id $r.ProcessId -ErrorAction SilentlyContinue))}
 Test 'Control characters are rejected before child start' {$r=Invoke-BoundedNative $node $hash @("bad`nargument") $root;Assert (!$r.Ok -and $r.ProcessId -eq 0)}
+Test 'Native success exposes exact parent creation and exit interval' {$r=Run env;Assert ($r.Ok -and [DateTime]::Parse($r.ExitedAt) -ge [DateTime]::Parse($r.CreatedAt))}
+Test 'Secrets and tunnel roots are isolated in child environment only' {
+ $names=@('CONTROL_PLANE_API_KEY','OPENAI_ADMIN_KEY','OPENAI_API_KEY','TUNNEL_CLIENT_STATE_DIR','TUNNEL_CLIENT_PROFILE_DIR');$saved=@{}
+ try{foreach($n in $names){$saved[$n]=[Environment]::GetEnvironmentVariable($n,'Process');[Environment]::SetEnvironmentVariable($n,'fixture-ambient','Process')}
+ $r=Invoke-BoundedNative $node $hash @($script,'isolated') $root -Environment @{CONTROL_PLANE_API_KEY='fixture-child';TUNNEL_CLIENT_STATE_DIR=$root;TUNNEL_CLIENT_PROFILE_DIR=$root}
+ Assert $r.Ok;$v=$r.Stdout|ConvertFrom-Json;Assert ($v.key -ceq 'fixture-child' -and $v.state -ceq $root -and $v.profile -ceq $root -and !$v.PSObject.Properties['admin'] -and !$v.PSObject.Properties['api'])
+ foreach($n in $names){Assert ([Environment]::GetEnvironmentVariable($n,'Process') -ceq 'fixture-ambient')}
+ }finally{foreach($n in $names){[Environment]::SetEnvironmentVariable($n,$saved[$n],'Process')}}
+}
+Test 'Arbitrary child environment injection is rejected' {$failed=$false;try{Invoke-BoundedNative $node $hash @($script,'env') $root -Environment @{PATH='fixture'}|Out-Null}catch{$failed=$_.Exception.Message -ceq 'NATIVE_ENVIRONMENT_INVALID'};Assert $failed}
 Write-Output ("RESULT: {0}/{0} PASS; benign disposable Node children; no tunnel/task/production operations" -f $passed)

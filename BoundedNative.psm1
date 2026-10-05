@@ -3,6 +3,8 @@ if(!('Codexless.BoundedNative' -as [type])){
 Add-Type -TypeDefinition @'
 using System;
 using System.Diagnostics;
+using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
@@ -11,7 +13,7 @@ namespace Codexless {
  public sealed class NativeResult {
   public bool Ok, TimedOut, OutputOverflow, LifetimeMayRemain;
   public int ExitCode = -1, ProcessId;
-  public string CreatedAt, Stdout, Code;
+  public string CreatedAt, ExitedAt, Stdout, Code;
  }
  public static class BoundedNative {
   static string Quote(string value) {
@@ -36,7 +38,7 @@ namespace Codexless {
     }
    }
   }
-  public static NativeResult Run(string exe,string sha256,string[] args,string cwd,int timeout,int limit){
+  public static NativeResult Run(string exe,string sha256,string[] args,string cwd,int timeout,int limit,Dictionary<string,string> environment){
    var result=new NativeResult();Process process=null;var clock=Stopwatch.StartNew();
    try{
     using(var image=File.Open(exe,FileMode.Open,FileAccess.Read,FileShare.Read)){
@@ -55,11 +57,13 @@ namespace Codexless {
      var info=new ProcessStartInfo(exe,command.ToString());info.WorkingDirectory=cwd;
      info.UseShellExecute=false;info.CreateNoWindow=true;info.RedirectStandardOutput=true;info.RedirectStandardError=true;
      info.EnvironmentVariables.Remove("NODE_OPTIONS");
+     foreach(string name in new string[]{"CONTROL_PLANE_API_KEY","OPENAI_ADMIN_KEY","OPENAI_API_KEY","TUNNEL_CLIENT_STATE_DIR","TUNNEL_CLIENT_PROFILE_DIR"})info.EnvironmentVariables.Remove(name);
+     foreach(var entry in environment)info.EnvironmentVariables[entry.Key]=entry.Value;
      process=new Process();process.StartInfo=info;
      if(clock.ElapsedMilliseconds>=timeout){result.TimedOut=true;result.Code="NATIVE_TIMEOUT";return result;}
      // An attempted launch that loses its identity query must remain fenced too.
      result.LifetimeMayRemain=true;
-     if(!process.Start())throw new InvalidOperationException();
+     try{if(!process.Start())throw new InvalidOperationException();}catch(Win32Exception){result.LifetimeMayRemain=false;throw;}
      result.ProcessId=process.Id;result.CreatedAt=process.StartTime.ToUniversalTime().ToString("o");
      result.LifetimeMayRemain=true;
      var output=new Capture();var error=new Capture();
@@ -67,7 +71,7 @@ namespace Codexless {
      while(!process.WaitForExit(Math.Min(25,Math.Max(1,timeout-(int)clock.ElapsedMilliseconds)))){
       if(clock.ElapsedMilliseconds>=timeout){result.TimedOut=true;result.Code="NATIVE_TIMEOUT";return result;}
      }
-     result.LifetimeMayRemain=false;result.ExitCode=process.ExitCode;
+     result.LifetimeMayRemain=false;result.ExitCode=process.ExitCode;result.ExitedAt=process.ExitTime.ToUniversalTime().ToString("o");
      int remaining=timeout-(int)clock.ElapsedMilliseconds;
      if(remaining<=0 || !Task.WhenAll(a,b).Wait(remaining)){result.TimedOut=true;result.Code="NATIVE_TIMEOUT";return result;}
      result.OutputOverflow=output.Overflow||error.Overflow;
@@ -75,6 +79,9 @@ namespace Codexless {
      if(result.ExitCode!=0){result.Code="NATIVE_EXIT_FAILED";return result;}
      result.Stdout=output.Text.ToString();result.Ok=true;result.Code="NATIVE_OK";return result;
     }
+   }catch(Win32Exception failure){
+    // A refused CreateProcess has no child lifetime. Never change security policy.
+    result.Code=(failure.NativeErrorCode==577 || failure.NativeErrorCode==1260)?"NATIVE_SECURITY_POLICY_UNSUPPORTED":"NATIVE_UNAVAILABLE";return result;
    }catch{result.Code="NATIVE_UNAVAILABLE";return result;}
    finally{if(process!=null)process.Dispose();}
   }
@@ -84,7 +91,7 @@ namespace Codexless {
 }
 
 function Invoke-BoundedNative {
-    param([string]$Executable,[string]$ExpectedSha256,[string[]]$Arguments,[string]$WorkingDirectory,[ValidateRange(100,30000)][int]$TimeoutMs=5000,[ValidateRange(128,65536)][int]$OutputLimit=65536)
+    param([string]$Executable,[string]$ExpectedSha256,[string[]]$Arguments,[string]$WorkingDirectory,[ValidateRange(100,30000)][int]$TimeoutMs=5000,[ValidateRange(128,65536)][int]$OutputLimit=65536,[hashtable]$Environment=@{})
     if($ExpectedSha256 -cnotmatch '^[0-9a-f]{64}$' -or $Executable -notmatch '^[A-Za-z]:[\\/]' -or $WorkingDirectory -notmatch '^[A-Za-z]:[\\/]'){throw 'NATIVE_CONTRACT_INVALID'}
     try{
         if(!(Test-Path -LiteralPath $Executable -PathType Leaf) -or !(Test-Path -LiteralPath $WorkingDirectory -PathType Container)){throw 'invalid'}
@@ -93,7 +100,12 @@ function Invoke-BoundedNative {
             while($cursor){if((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'invalid'};$cursor=Split-Path $cursor -Parent}
         }
     }catch{throw 'NATIVE_CONTRACT_INVALID'}
-    [Codexless.BoundedNative]::Run($Executable,$ExpectedSha256,$Arguments,$WorkingDirectory,$TimeoutMs,$OutputLimit)
+    $childEnvironment=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach($key in $Environment.Keys){
+        if($key -cnotin @('CONTROL_PLANE_API_KEY','TUNNEL_CLIENT_STATE_DIR','TUNNEL_CLIENT_PROFILE_DIR') -or $null -eq $Environment[$key] -or [string]$Environment[$key] -match '[\x00\r\n]'){throw 'NATIVE_ENVIRONMENT_INVALID'}
+        $childEnvironment.Add([string]$key,[string]$Environment[$key])
+    }
+    [Codexless.BoundedNative]::Run($Executable,$ExpectedSha256,$Arguments,$WorkingDirectory,$TimeoutMs,$OutputLimit,$childEnvironment)
 }
 
 Export-ModuleMember -Function Invoke-BoundedNative
