@@ -1,0 +1,9 @@
+# Bounded native operation substrate
+
+`Invoke-BoundedNative` requires an exact executable SHA-256, a local non-reparse executable/working directory, an explicit argument array, a deadline (100 ms to 30 seconds), and separate bounded output captures. It holds the executable open while hashing and launching, uses Windows argv quoting without a shell, removes NODE_OPTIONS in the child, never returns raw stderr, and returns no stdout on failure. Raw successful stdout is temporary parser input and must never be persisted as logs or receipts.
+
+A timeout is **indeterminate**, not evidence that the native process exited. The result carries the launched PID and creation time only as destination-local evidence, and `LifetimeMayRemain` remains true. There is no force termination. Callers must retain/fence the transaction and prove the exact lifetime absent or invoke a qualified official cooperative stop before any retry, adoption or receipt retirement. A redirected-output timeout may also leave a descendant alive even if the immediate probe exited; it must not authorize lifecycle mutation.
+
+This substrate is tested using harmless disposable children, including stdout/stderr overflow, preserved arguments, a naturally exiting timeout fixture, wrong executable hash and nonzero exit. It is not yet wired into tunnel status/connect/stop: the portable client distribution/version, daemonization/parent relationship, generation attribution and official stop semantics are unqualified. Existing automatic connect remains disabled. Do not call this a completed tunnel lifecycle milestone.
+
+Installer/repair/uninstall and update/rollback transactions remain disabled until their complete provenance and ownership adapters are qualified. Generic child bounds alone cannot authorize promotion, task mutation, adoption or cleanup.

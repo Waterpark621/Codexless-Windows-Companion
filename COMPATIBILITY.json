@@ -38,6 +38,7 @@
     "generationBoundRecoveryImplemented": true,
     "artifactVerificationFrameworkImplemented": true,
     "nodeArchivePinned": true,
+    "boundedNativeSubstrateImplemented": true,
     "friendInstallReady": false,
     "remainingBlockers": [
       "tunnel launch provenance",

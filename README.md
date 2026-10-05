@@ -65,6 +65,8 @@ The intended supported flow is:
 
 ## Development rule
 
+Local engineering now includes digest-only owner/recovery generation binding, an official Node 24.12.0 Windows x64 archive pin with verified staging, and a bounded native execution substrate. Codexless/tunnel download policies remain unbound, and the native substrate is not yet a qualified tunnel lifecycle. Installer mutation and automatic connect remain disabled. See docs/GENERATION-CONTRACT.md, docs/ARTIFACT-PROVENANCE.md and docs/BOUNDED-NATIVE.md for the exact boundaries.
+
 Keep the ownership/security mechanisms; remove machine assumptions.
 
 Before any push or release, run `tools/Test-PublicTree.ps1`, scan the complete Git history with private needles, and inspect the exact release archive contents. Runtime tunnel profiles and Browser/cache directories must never be packaged.
