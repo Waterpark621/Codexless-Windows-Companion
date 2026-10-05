@@ -22,11 +22,13 @@
   },
   "portability": {
     "portableRuntimeBinding": true,
+    "freshInstallerImplemented": true,
+    "doctorImplemented": true,
     "friendInstallReady": false,
     "remainingBlockers": [
-      "destination-machine installer and repair flow",
-      "local tunnel credential setup flow",
-      "Doctor and rollback/update transaction",
+      "Browser-backend Doctor probe",
+      "repair/uninstall/update and rollback flows",
+      "download provenance for qualified binaries",
       "qualified Codexless fork release",
       "qualified tunnel-client release",
       "clean second-user/machine acceptance"

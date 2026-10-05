@@ -17,12 +17,20 @@
 - [x] Bind readiness to /readyz, release version, and public surface.
 - [x] Preserve same-boot fail-closed and verified prior-boot recovery.
 
+## Implemented but not yet clean-machine qualified
+
+- [x] Fresh-install-only installer accepts explicit Codexless release, Node/project path, port, and optional tunnel-client inputs.
+- [x] Runtime API key is entered on the destination PC and stored only as current-user Windows DPAPI ciphertext.
+- [x] Installer stages and validates its payload before promoting the Companion directory.
+- [x] Installer refuses an existing task/non-empty install instead of adopting or overwriting it.
+- [x] Read-only Doctor checks settings, release identity, task/owner state, readiness, and official tunnel status.
+- [x] Friendly Start / Stop / Restart / Status entrypoints added.
+- [ ] Add Browser-backend connectivity probe to Doctor.
+
 ## Required before friend install
 
-- [ ] Implement installer discovery/selection for the qualified Codexless fork release, Node, project path, and tunnel client.
-- [ ] Implement local tunnel credential setup without copying credentials from another PC.
-- [ ] Add install / uninstall / repair commands with one rollback generation.
-- [ ] Add a Doctor command that checks owner, listener, release identity, tunnel, and Browser readiness.
+- [ ] Add download/provenance flow for a qualified Codexless fork release and tunnel-client binary.
+- [ ] Add uninstall / repair commands with one rollback generation.
 - [ ] Add update transaction: detect -> stage -> verify -> stop -> promote -> restart -> rollback on failure.
 - [ ] Qualify one tagged Waterpark621/Codexless release and one tunnel-client generation.
 - [ ] Validate archive provenance/checksum before installing a downloaded release.

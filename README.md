@@ -60,7 +60,7 @@ The intended supported flow is:
 9. retain one rollback generation;
 10. survive Desktop close/reopen and Windows reboot in the supported logged-in-user model.
 
-The remaining work is installer/Doctor/update UX plus clean-machine qualification. Do not use this repository as a friend installer until those gates pass.
+A fresh-install-only `Install.ps1` and read-only `Doctor.ps1` now exist, together with simple Start/Stop/Restart/Status entrypoints. They are source/fixture validated but have **not** yet passed a clean second-user/machine install. Browser-backend probing, repair/update/uninstall, download provenance, and clean-machine qualification remain release gates. Do not use this repository as a friend installer until those gates pass.
 
 ## Development rule
 

@@ -111,7 +111,13 @@ function Get-CompanionConfig {
         if ($tunnel.PSObject.Properties['enabled']) { $enabled=[bool]$tunnel.enabled }
         if ($enabled) {
             $tunnelExe=Resolve-CompanionLocalPath ([string](Get-RequiredProperty $tunnel 'executable' 'tunnel.executable')) 'tunnel.executable' File -MustExist
-            $profileDir=Resolve-CompanionLocalPath ([string](Get-RequiredProperty $tunnel 'profileDir' 'tunnel.profileDir')) 'tunnel.profileDir' Directory -MustExist
+            $profileSetting=[string](Get-RequiredProperty $tunnel 'profileDir' 'tunnel.profileDir')
+            if([IO.Path]::IsPathRooted($profileSetting)){
+                $profileDir=Resolve-CompanionLocalPath $profileSetting 'tunnel.profileDir' Directory -MustExist
+            } else {
+                $profileDir=Assert-PathWithinRoot $root (Join-Path $root $profileSetting) 'tunnel.profileDir'
+                if(!(Test-Path -LiteralPath $profileDir -PathType Container)){throw 'COMPANION_SETTINGS_INVALID: tunnel.profileDir does not exist.'}
+            }
             $alias=[string](Get-RequiredProperty $tunnel 'alias' 'tunnel.alias')
             $tunnelId=[string](Get-RequiredProperty $tunnel 'tunnelId' 'tunnel.tunnelId')
             if ($alias -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' -or [string]::IsNullOrWhiteSpace($tunnelId)) { throw 'COMPANION_SETTINGS_INVALID: Tunnel alias/id are invalid.' }

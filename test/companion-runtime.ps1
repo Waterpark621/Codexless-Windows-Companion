@@ -72,5 +72,19 @@ Test 'Tunnel key path cannot escape Companion root' {
   try { Get-CompanionConfig $companion|Out-Null } catch { $failed=$_.Exception.Message -like 'COMPANION_SETTINGS_INVALID:*' }
   Assert $failed
 }
+Test 'Relative tunnel profile and DPAPI key stay inside Companion root' {
+  $profile=Join-Path $companion 'tunnel-profile';New-Item -ItemType Directory -Force -Path $profile|Out-Null
+  $keys=Join-Path $companion 'keys';New-Item -ItemType Directory -Force -Path $keys|Out-Null
+  $exe=Join-Path $root 'tunnel-client.exe'
+  $secret=ConvertTo-SecureString 'fixture-runtime-key' -AsPlainText -Force
+  ConvertFrom-SecureString -SecureString $secret|Set-Content -LiteralPath (Join-Path $keys 'runtime-key.dpapi') -Encoding ascii
+  $good=[ordered]@{schemaVersion=1;project=[ordered]@{path=$project};codexless=[ordered]@{root=$codexless;nodeExe=$node;port=17690};tunnel=[ordered]@{enabled=$true;executable=$exe;profileDir='tunnel-profile';alias='fixture';tunnelId='fixture-id';keyFile='keys/runtime-key.dpapi'}}
+  $good|ConvertTo-Json -Depth 6|Set-Content -LiteralPath (Join-Path $companion 'settings.json') -Encoding utf8
+  $cfg=Get-CompanionConfig $companion
+  Assert ($cfg.profileDir -ceq [IO.Path]::GetFullPath($profile))
+  Assert ($cfg.tunnels[0].keyPath -ceq [IO.Path]::GetFullPath((Join-Path $keys 'runtime-key.dpapi')))
+  $plain=Get-PlainRuntimeKey $cfg.tunnels[0]
+  try { Assert ($plain -ceq 'fixture-runtime-key') } finally { $plain=$null }
+}
 Remove-Item -LiteralPath $root -Recurse -Force
 Write-Output ("RESULT: {0}/{0} PASS; portable config/release contract only; no live deployment actions" -f $passed)
