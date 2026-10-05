@@ -46,12 +46,11 @@
     "friendInstallReady": false,
     "remainingBlockers": [
       "publish exact Codexless 0.1.2-preview.1 archive and bind immutable URL, archive filename, and SHA-256",
-      "native transactional install/repair/uninstall/update adapter qualification",
       "clean second-user/machine and Windows security-policy acceptance"
     ],
     "tunnelLaunchProvenanceImplemented": true,
     "installTransactionSubstrateImplemented": true,
     "updateRollbackSubstrateImplemented": true,
-    "nativeInstallAdapterQualified": false
+    "nativeInstallAdapterQualified": true
   }
 }

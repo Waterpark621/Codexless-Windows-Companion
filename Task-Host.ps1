@@ -1,11 +1,36 @@
-param([Parameter(Mandatory=$true)] [string]$LauncherDirectory, [Parameter(Mandatory=$true)] [string]$UserSid)
+param(
+    [Parameter(Mandatory=$true)] [string]$LauncherDirectory,
+    [Parameter(Mandatory=$true)] [string]$UserSid,
+    [string]$TaskName,
+    [string]$TransactionId,
+    [string]$GenerationId
+)
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'WindowsTaskAdapter.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'GenerationIdentity.psm1') -Force
 if ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -cne $UserSid) { throw 'TASK_OWNER_INVALID' }
 Assert-HouseholdPrincipal $UserSid (Get-Acl -LiteralPath (Join-Path $LauncherDirectory 'settings.json') -ErrorAction Stop).GetOwner([Security.Principal.SecurityIdentifier]).Value
-$definition = New-HouseholdTaskDefinition -UserSid $UserSid -LauncherDirectory $LauncherDirectory -HostScript $PSCommandPath -PowerShellExe (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe')
+$definitionParameters=@{
+    UserSid=$UserSid
+    LauncherDirectory=$LauncherDirectory
+    HostScript=$PSCommandPath
+    PowerShellExe=(Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe')
+}
+if (![string]::IsNullOrWhiteSpace($TaskName)) { $definitionParameters.TaskName=$TaskName }
+$transactionBound=![string]::IsNullOrWhiteSpace($TransactionId) -or ![string]::IsNullOrWhiteSpace($GenerationId)
+if ($transactionBound) {
+    if ($TransactionId -cnotmatch '^[0-9a-f]{32}$' -or $GenerationId -cnotmatch '^[0-9a-f]{32}$') { throw 'TASK_TRANSACTION_INVALID' }
+    $ownerPath=Join-Path $LauncherDirectory 'native-adapter-owner.json'
+    if (!(Test-Path -LiteralPath $ownerPath -PathType Leaf) -or (Get-Item -LiteralPath $ownerPath -Force).Length -gt 32768) { throw 'TASK_TRANSACTION_OWNER_MISSING' }
+    try { $nativeOwner=Get-Content -LiteralPath $ownerPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop }
+    catch { throw 'TASK_TRANSACTION_OWNER_INVALID' }
+    if ($nativeOwner.version -ne 1 -or $nativeOwner.state -cne 'active' -or $nativeOwner.transactionId -cne $TransactionId -or
+        $nativeOwner.generationId -cne $GenerationId -or $nativeOwner.payloadSha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'TASK_TRANSACTION_OWNER_INVALID' }
+    $definitionParameters.TransactionId=$TransactionId
+    $definitionParameters.GenerationId=$GenerationId
+}
+$definition = New-HouseholdTaskDefinition @definitionParameters
 # A running task alone does not prove that this process was spawned by Task Scheduler.
 $taskIdentity = Get-ProcessIdentity $PID
 $parentIdentity = Get-TaskSchedulerParentIdentity $taskIdentity.parentPid

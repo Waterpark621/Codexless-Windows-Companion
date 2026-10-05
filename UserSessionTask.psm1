@@ -17,19 +17,44 @@ function Assert-HouseholdPrincipal {
 }
 
 function New-HouseholdTaskDefinition {
-    param([string]$UserSid, [string]$LauncherDirectory, [string]$HostScript, [string]$PowerShellExe)
+    param(
+        [string]$UserSid,
+        [string]$LauncherDirectory,
+        [string]$HostScript,
+        [string]$PowerShellExe,
+        [string]$TaskName,
+        [string]$TransactionId,
+        [string]$GenerationId
+    )
     if ($UserSid -notmatch '^S-1-5-21-\d+-\d+-\d+-\d+$') { throw 'TASK_OWNER_INVALID: A Windows user SID is required.' }
     $launcher = Assert-TaskPath $LauncherDirectory
     $hostFile = Assert-TaskPath $HostScript
     $powershell = Assert-TaskPath $PowerShellExe
-    $name = "Codexless-Household-$UserSid"
+    $defaultName = "Codexless-Household-$UserSid"
+    $name = if ([string]::IsNullOrWhiteSpace($TaskName)) { $defaultName } else { $TaskName }
+    if ($name -cnotmatch '^Codexless-[A-Za-z0-9_.-]{1,220}$') { throw 'TASK_NAME_INVALID: Refusing an unsafe Scheduled Task name.' }
+    $transactionBound = ![string]::IsNullOrWhiteSpace($TransactionId) -or ![string]::IsNullOrWhiteSpace($GenerationId)
+    if ($transactionBound) {
+        if ($TransactionId -cnotmatch '^[0-9a-f]{32}$' -or $GenerationId -cnotmatch '^[0-9a-f]{32}$') {
+            throw 'TASK_TRANSACTION_INVALID: Exact transaction and generation identifiers are required together.'
+        }
+    }
     $escape = { param($value) [Security.SecurityElement]::Escape($value) }
     # Preserve the existing launcher's process-local script execution setting.
     $arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$hostFile`" -LauncherDirectory `"$launcher`" -UserSid $UserSid"
+    if ($name -cne $defaultName) { $arguments += " -TaskName `"$name`"" }
+    $description='Codexless household user-session owner; launcher-only v1'
+    $transactionBinding=$null
+    if ($transactionBound) {
+        $arguments += " -TransactionId $TransactionId -GenerationId $GenerationId"
+        $transactionBinding="$TransactionId/$GenerationId"
+        $description += "; transaction=$TransactionId; generation=$GenerationId"
+    }
+    $registration="<RegistrationInfo><Description>$(& $escape $description)</Description></RegistrationInfo>"
     $xml = @"
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo><Description>Codexless household user-session owner; launcher-only v1</Description></RegistrationInfo>
+  $registration
   <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>$(& $escape $UserSid)</UserId></LogonTrigger></Triggers>
   <Principals><Principal id="Owner"><UserId>$(& $escape $UserSid)</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
   <Settings>
@@ -43,7 +68,19 @@ function New-HouseholdTaskDefinition {
   <Actions Context="Owner"><Exec><Command>$(& $escape $powershell)</Command><Arguments>$(& $escape $arguments)</Arguments><WorkingDirectory>$(& $escape $launcher)</WorkingDirectory></Exec></Actions>
 </Task>
 "@
-    [pscustomobject]@{ Name=$name; UserSid=$UserSid; LauncherDirectory=$launcher; HostScript=$hostFile; PowerShellExe=$powershell; Arguments=$arguments; Xml=$xml }
+    [pscustomobject]@{
+        Name=$name
+        UserSid=$UserSid
+        LauncherDirectory=$launcher
+        HostScript=$hostFile
+        PowerShellExe=$powershell
+        Arguments=$arguments
+        TransactionId=if($transactionBound){$TransactionId}else{$null}
+        GenerationId=if($transactionBound){$GenerationId}else{$null}
+        TransactionBinding=$transactionBinding
+        Description=$description
+        Xml=$xml
+    }
 }
 
 function Assert-HouseholdTaskIdentity {
@@ -58,6 +95,9 @@ function Assert-HouseholdTaskIdentity {
         $wantedNs.AddNamespace('t','http://schemas.microsoft.com/windows/2004/02/mit/task')
         $actualPriority=$actual.SelectNodes('/t:Task/t:Settings/t:Priority',$ns)
         if($actualPriority.Count -ne 1 -or $actualPriority[0].InnerText -cne '4'){throw 'mismatch: task priority'}
+        $expectedDescription=$expected.SelectSingleNode('/t:Task/t:RegistrationInfo/t:Description',$wantedNs)
+        $actualDescription=$actual.SelectNodes('/t:Task/t:RegistrationInfo/t:Description',$ns)
+        if($actualDescription.Count -ne 1 -or $actualDescription[0].InnerText -cne $expectedDescription.InnerText){throw 'mismatch: task description'}
         # Scheduler export omits these schema defaults; omission preserves their exact meaning.
         $defaults = @{
             '/t:Task/t:Principals/t:Principal/t:RunLevel'='LeastPrivilege'
