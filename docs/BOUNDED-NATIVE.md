@@ -4,7 +4,7 @@
 
 A timeout is **indeterminate**, not evidence that the native process exited. The result carries the launched PID and creation time only as destination-local evidence, and `LifetimeMayRemain` remains true. There is no force termination. Callers must retain/fence the transaction and prove the exact lifetime absent or invoke a qualified official cooperative stop before any retry, adoption or receipt retirement. A redirected-output timeout may also leave a descendant alive even if the immediate probe exited; it must not authorize lifecycle mutation.
 
-This substrate is tested using harmless disposable children, including stdout/stderr overflow, preserved arguments, a naturally exiting timeout fixture, wrong executable hash and nonzero exit. It is not yet wired into tunnel status/connect/stop: the portable client distribution/version, daemonization/parent relationship, generation attribution and official stop semantics are unqualified. Existing automatic connect remains disabled. Do not call this a completed tunnel lifecycle milestone.
+This substrate is tested using harmless disposable children, including stdout/stderr overflow, preserved arguments, a naturally exiting timeout fixture, wrong executable hash and nonzero exit. It now supplies every qualified tunnel status/connect/stop operation. Exact managed-child attribution and guarded official stop are described in TUNNEL-LIFECYCLE.md. Automatic connect is limited to a fresh verified owner generation; existing or uncertain generations cannot be replaced.
 
 Installer/repair/uninstall and update/rollback transactions remain disabled until their complete provenance and ownership adapters are qualified. Generic child bounds alone cannot authorize promotion, task mutation, adoption or cleanup.
 

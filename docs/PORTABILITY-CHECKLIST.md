@@ -39,9 +39,10 @@
 - [ ] Qualify the distributable Node runtime binary/version and tunnel-client binary/version/provenance.
 - [x] Pin the official Node 24.12.0 Windows x64 archive and implement verified, bounded staging with safe ZIP extraction.
 - [ ] Select and qualify the portable tunnel-client distribution/version/archive checksum; bind the published Codexless download artifact.
-- [ ] Establish exact tunnel launch provenance before re-enabling automatic `runtimes connect`.
+- [x] Qualify exact fresh-generation managed tunnel launch, bounded status and guarded official stop.
 - [ ] Add bounded native tunnel status/connect/stop execution.
-- [ ] Add an incomplete-install fence plus ownership-verified repair/uninstall.
+- [x] Add internal staged transaction engines, incomplete fences and ownership-verified adapter contracts.
+- [ ] Qualify the real package/task/provenance adapter before enabling install/repair/uninstall/update mutation.
 - [ ] Add update + rollback transaction: detect -> stage -> verify -> stop -> promote -> restart -> rollback on failure.
 - [ ] Add download/provenance flow and archive checksum verification for qualified binaries.
 - [ ] Test clean installation under a different Windows user and different paths.

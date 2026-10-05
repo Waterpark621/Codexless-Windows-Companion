@@ -176,6 +176,76 @@ function Invoke-OwnedUninstallCore {
   [pscustomobject]@{state='uninstalled';verified=$true;userDataPreserved=$true}
  }catch{throw 'TRANSACTION_UNINSTALL_INCOMPLETE: Exact evidence retained; ambiguous material was not removed.'}
 }
+function Invoke-OwnedUpdateCore {
+ param([string]$Root,[string]$Payload,[hashtable]$Adapter)
+ Assert-TransactionAdapter $Adapter
+ $owned=Get-OwnedInstall $Root $Adapter
+ $payload=Assert-TransactionRoot $Payload
+ & $Adapter.Validate $Root $payload
+ if(!(& $Adapter.VerifyStage $payload)){throw 'TRANSACTION_PROVENANCE_INVALID'}
+ $inventory=@(Get-TransactionInventory $payload);$digest=Get-TransactionTreeDigest $payload
+ $id=[Guid]::NewGuid().ToString('N')
+ $generation=Join-Path (Join-Path $owned.root 'generations') $id
+ $fencePath=Join-Path $owned.root 'incomplete-install.json'
+ $fence=[ordered]@{version=1;transactionId=$id;ownerDigest=$owned.record.ownerDigest;operation='update';stage='staging';generationId=$id;payloadSha256=$digest;rollbackGenerationId=$owned.record.generationId;rollbackSha256=$owned.record.payloadSha256;requiresVerifiedRecovery=$true}
+ Write-TransactionRecord $fencePath $fence -CreateNew
+ $stopAttempted=$false;$candidateStartAttempted=$false;$promoted=$false
+ try{
+  New-Item -ItemType Directory -Path $generation -ErrorAction Stop|Out-Null
+  foreach($entry in $inventory){$target=Join-Path $generation $entry.path;New-Item -ItemType Directory -Path (Split-Path $target -Parent) -Force|Out-Null;[IO.File]::Copy((Join-Path $payload $entry.path),$target,$false)}
+  if((Get-TransactionTreeDigest $generation) -cne $digest -or !(& $Adapter.VerifyStage $generation)){throw 'candidate changed'}
+  $candidate=[ordered]@{version=1;state='installed';transactionId=$id;generationId=$id;ownerDigest=$owned.record.ownerDigest;rootDigest=$owned.record.rootDigest;payloadSha256=$digest}
+  # Freeze the complete previous receipt in sanitized rollback material.
+  Write-TransactionRecord (Join-Path $owned.root 'rollback-owner.json') $owned.record
+  if((Get-TransactionTreeDigest $owned.generation) -cne $owned.record.payloadSha256 -or !(& $Adapter.VerifyStage $owned.generation)){throw 'rollback changed'}
+  $currentReceipt=Read-TransactionRecord (Join-Path $owned.root 'install-owner.json')
+  if(($currentReceipt|ConvertTo-Json -Compress) -cne ($owned.record|ConvertTo-Json -Compress)){throw 'current receipt changed'}
+  & $Adapter.AssertTask $owned.record
+  Set-TransactionStage $fence $fencePath 'stopping-current'
+  $stopAttempted=$true
+  & $Adapter.Stop $owned.generation $owned.record
+  if(!(& $Adapter.VerifyStopped $owned.record)){throw 'stop uncertain'}
+  & $Adapter.AssertTask $owned.record
+  Set-TransactionStage $fence $fencePath 'promoting-candidate'
+  if(!$Adapter.ContainsKey('Promote') -or $Adapter.Promote -isnot [scriptblock]){throw 'promotion unsupported'}
+  if((Get-TransactionTreeDigest $generation) -cne $digest -or !(& $Adapter.VerifyStage $generation)){throw 'candidate changed before promotion'}
+  $promoted=$true
+  & $Adapter.Promote $generation $candidate
+  & $Adapter.AssertTask $candidate
+  Write-TransactionRecord (Join-Path $owned.root 'install-owner.json') $candidate
+  Set-TransactionStage $fence $fencePath 'starting-candidate'
+  $candidateStartAttempted=$true
+  & $Adapter.Start $generation $candidate
+  Set-TransactionStage $fence $fencePath 'verifying-candidate'
+  if(!(& $Adapter.VerifyReady $generation $candidate)){throw 'candidate readiness'}
+  Set-TransactionStage $fence $fencePath 'finalizing'
+  Remove-Item -LiteralPath $fencePath -ErrorAction Stop
+  [pscustomobject]@{state='updated';verified=$true;rollbackAvailable=$true}
+ }catch{
+  # Never roll back around unproven stop, changed material or missing evidence.
+  try{
+   if(!$stopAttempted){throw 'no stop proof'}
+   if($candidateStartAttempted){
+    Set-TransactionStage $fence $fencePath 'stopping-failed-candidate'
+    & $Adapter.AssertTask $candidate
+    & $Adapter.Stop $generation $candidate
+    if(!(& $Adapter.VerifyStopped $candidate)){throw 'candidate still exists'}
+   }elseif(!(& $Adapter.VerifyStopped $owned.record)){throw 'current stop uncertain'}
+   $rollback=Read-TransactionRecord (Join-Path $owned.root 'rollback-owner.json')
+   if(($rollback|ConvertTo-Json -Compress) -cne ($owned.record|ConvertTo-Json -Compress) -or (Get-TransactionTreeDigest $owned.generation) -cne $owned.record.payloadSha256 -or !(& $Adapter.VerifyStage $owned.generation)){throw 'rollback evidence changed'}
+   Set-TransactionStage $fence $fencePath 'restoring-prior'
+   if($promoted){& $Adapter.AssertTask $candidate;& $Adapter.Promote $owned.generation $owned.record}
+   & $Adapter.AssertTask $owned.record
+   Write-TransactionRecord (Join-Path $owned.root 'install-owner.json') $owned.record
+   Set-TransactionStage $fence $fencePath 'restarting-prior'
+   & $Adapter.Start $owned.generation $owned.record
+   if(!(& $Adapter.VerifyReady $owned.generation $owned.record)){throw 'rollback readiness'}
+   Set-TransactionStage $fence $fencePath 'rolled-back'
+   Remove-Item -LiteralPath $fencePath -ErrorAction Stop
+   [pscustomobject]@{state='rolled-back';verified=$true;candidateAccepted=$false}
+  }catch{throw 'TRANSACTION_UPDATE_INCOMPLETE: Exact generations retained; rollback proof incomplete.'}
+ }
+}
 function Invoke-TransactionLocked([string]$Root,[scriptblock]$Body) {
  $root=Assert-TransactionRoot $Root
  $digest=Get-TransactionBytesDigest ([Text.Encoding]::UTF8.GetBytes($root.ToLowerInvariant()))
@@ -190,4 +260,5 @@ function Invoke-TransactionLocked([string]$Root,[scriptblock]$Body) {
 function Invoke-InstallTransaction {param([string]$Root,[string]$Payload,[hashtable]$Adapter) Invoke-TransactionLocked $Root {Invoke-InstallTransactionCore $Root $Payload $Adapter}}
 function Invoke-OwnedRepair {param([string]$Root,[hashtable]$Adapter) Invoke-TransactionLocked $Root {Invoke-OwnedRepairCore $Root $Adapter}}
 function Invoke-OwnedUninstall {param([string]$Root,[hashtable]$Adapter) Invoke-TransactionLocked $Root {Invoke-OwnedUninstallCore $Root $Adapter}}
-Export-ModuleMember -Function Invoke-InstallTransaction,Invoke-OwnedRepair,Invoke-OwnedUninstall,Get-OwnedInstall,Get-TransactionTreeDigest
+function Invoke-OwnedUpdate {param([string]$Root,[string]$Payload,[hashtable]$Adapter) Invoke-TransactionLocked $Root {Invoke-OwnedUpdateCore $Root $Payload $Adapter}}
+Export-ModuleMember -Function Invoke-InstallTransaction,Invoke-OwnedRepair,Invoke-OwnedUninstall,Invoke-OwnedUpdate,Get-OwnedInstall,Get-TransactionTreeDigest

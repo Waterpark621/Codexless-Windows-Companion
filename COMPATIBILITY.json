@@ -42,10 +42,13 @@
     "boundedNativeSubstrateImplemented": true,
     "friendInstallReady": false,
     "remainingBlockers": [
-      "repair/uninstall/update rollback flows",
-      "download provenance and distributable Node/tunnel binary qualification",
-      "clean second-user/machine acceptance"
+      "qualified Codexless remote distribution binding",
+      "native transactional install/repair/uninstall/update adapter qualification",
+      "clean second-user/machine and Windows security-policy acceptance"
     ],
-    "tunnelLaunchProvenanceImplemented": true
+    "tunnelLaunchProvenanceImplemented": true,
+    "installTransactionSubstrateImplemented": true,
+    "updateRollbackSubstrateImplemented": true,
+    "nativeInstallAdapterQualified": false
   }
 }
