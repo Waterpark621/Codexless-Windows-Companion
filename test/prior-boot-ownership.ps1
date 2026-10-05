@@ -19,7 +19,7 @@ function New-Fixture {
     New-Item -ItemType Directory -Path (Join-Path $folder 'tunnel-owners') -Force | Out-Null
     $script:def=New-HouseholdTaskDefinition $sid $folder (Join-Path $folder 'Task-Host.ps1') $powershell
     '{}' | Set-Content -LiteralPath (Join-Path $folder 'settings.json')
-    $script:fixtureCfg=[pscustomobject]@{
+    $script:fixtureCfg=[pscustomobject]@{companionRoot=$folder;
         settingsPath=(Join-Path $folder 'settings.json')
         projectPath=$folder
         release=[pscustomobject]@{version='fixture';buildId=('b'*64);sourceRevision=('c'*40);manifestSha256=('d'*64);hostContractVersion='codexless-public-preview-v1'}
@@ -40,7 +40,10 @@ function New-Fixture {
     '102' | Set-Content -LiteralPath (Join-Path $folder 'codexless.pid')
     $sha=[Security.Cryptography.SHA256]::Create()
     try{$digest=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes('fixture-registration')))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
-    Save 'tunnel-owners\fixture.json' ([pscustomobject]@{version=1;alias='fixture';pid=103;createdAt='2026-10-03T00:00:02.123456Z';nativeCreatedAt='2026-10-03T00:00:02.1234567Z';userSid=$sid;executable='C:\fixture\tunnel-client.exe';registrationDigest=$digest})
+    $context=Get-TunnelRuntimeContext $fixtureCfg $fixtureCfg.tunnels[0]
+    $sha=[Security.Cryptography.SHA256]::Create()
+    try{$namespace=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($context.stateRoot)))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
+    Save 'tunnel-owners\fixture.json' ([pscustomobject]@{version=2;connectPid=104;connectCreatedAt='2026-10-03T00:00:01.123456Z';connectExitedAt='2026-10-03T00:00:03.123456Z';generationSha256=$owner.generationContract.sha256;executableSha256='fcc85a69ec0ad82518e4f8964f60c45e31787957782a0fc9c1b0c44e82d61b9b';namespaceDigest=$namespace;alias='fixture';pid=103;createdAt='2026-10-03T00:00:02.123456Z';nativeCreatedAt='2026-10-03T00:00:02.1234567Z';userSid=$sid;executable='C:\fixture\tunnel-client.exe';registrationDigest=$digest})
     & $module {
         param($folder,$cfg)
         $script:fixtureFolder=$folder
@@ -207,4 +210,6 @@ Test 'Recovery source has no force kill, stop, connect, adoption, or Scheduler m
     $source=Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\PriorBootOwnership.psm1') -Raw
     Assert ($source -notmatch '(?i)Stop-Process|taskkill|\.Kill\(|Stop-ScheduledTask|Register-ScheduledTask|runtimes (connect|stop)')
 }
+foreach($field in @('generationSha256','executableSha256','namespaceDigest')){Test "Prior-boot tunnel $field mismatch remains fenced" {New-Fixture;$v=Load 'tunnel-owners\fixture.json';$v.$field='0'*64;Save 'tunnel-owners\fixture.json' $v;Refuses}}
+Test 'Missing prior-boot tunnel connect interval remains fenced' {New-Fixture;$v=Load 'tunnel-owners\fixture.json';$v.PSObject.Properties.Remove('connectExitedAt');Save 'tunnel-owners\fixture.json' $v;Refuses}
 Write-Output ("RESULT: {0}/{0} PASS; fixture receipt I/O only; native observations mocked; no live deployment/task/tunnel actions" -f $passed)

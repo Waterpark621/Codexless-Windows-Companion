@@ -21,7 +21,7 @@ $consoleReceipt | ConvertTo-Json | Set-Content -LiteralPath $consoleReceiptPath
     param($definition,$receipt,$cfg)
     $script:FixtureConfig=$cfg
     $script:FixtureListener=$true
-    $script:FixtureTunnel=[pscustomobject]@{process=[pscustomobject]@{pid=103};runtime_state='running';process_running=$true;ready=$true;tunnel_id='fixture-exact-tunnel'}
+    $script:TunnelReceiptValid=$true;$script:FixtureTunnel=[pscustomobject]@{healthy=$true;process=[pscustomobject]@{pid=103};runtime_state='running';process_running=$true;ready=$true;tunnel_id='fixture-exact-tunnel'}
     $script:FixtureTask=[pscustomobject]@{State='Running'}
     $script:FixtureProcesses=@{
         101=[pscustomobject]@{pid=101;parentPid=1;userSid=$definition.UserSid;executable=$definition.PowerShellExe;commandLine=('powershell -File "'+$definition.HostScript+'"');createdAt=$receipt.createdAt}
@@ -31,6 +31,7 @@ $consoleReceipt | ConvertTo-Json | Set-Content -LiteralPath $consoleReceiptPath
     function script:Get-CompanionConfig { param($CompanionRoot) $script:FixtureConfig }
     function script:Test-TcpPort { param([int]$Port) $script:FixtureListener }
     function script:Get-ConfiguredTunnels { param($Config,[switch]$IncludeDisabled) @($Config.tunnels) }
+    function script:Test-OwnedTunnel {param($launcher,$Config,$Tunnel,$Status) $script:TunnelReceiptValid}
     function script:Get-TunnelStatus { param($Config,$Tunnel) $script:FixtureTunnel }
     function script:Get-ScheduledTask { param($TaskName,$TaskPath,$ErrorAction) if($TaskPath -cne '\'){throw 'Task scope must be root'}; $script:FixtureTask }
     function script:Get-ProcessIdentity { param([int]$ProcessId) $script:FixtureProcesses[$ProcessId] }
@@ -41,6 +42,9 @@ function Assert-State([string]$Name,[bool]$Expected) {
     if ($state.piecesVerified -ne $Expected) { throw "FAIL $Name" }
     $script:passed++;Write-Output "PASS $Name"
 }
+& $module {$script:TunnelReceiptValid=$false}
+Assert-State 'Unreceipted ready tunnel never grants adapter stop authority' $false
+& $module {$script:TunnelReceiptValid=$true}
 Assert-State 'Owned household and exact tunnel fixture passes actual adapter' $true
 & $module {$script:FixtureConfig.projectPath='C:\fixture\changed'}
 Assert-State 'Changed live generation does not authorize stop through adapter' $false

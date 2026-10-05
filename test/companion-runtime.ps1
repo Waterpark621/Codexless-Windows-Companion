@@ -361,20 +361,18 @@ Test 'Root-relative drive-relative and UNC paths are rejected' {
   }
 }
 
-Test 'Tunnel connect suppresses client output and restores ambient runtime-key environment' {
-  $cmd=Join-Path $root 'fake-tunnel.cmd'
-  Set-Content -LiteralPath $cmd -Value '@echo should-not-be-returned& exit /b 0' -Encoding ascii
-  $connectCfg=[pscustomobject]@{tunnelExe=$cmd;profileDir=$root;mcpUrl='http://127.0.0.1:17690/mcp'}
-  $connectTunnel=[pscustomobject]@{alias='fixture';tunnelId='fixture-id'}
-  $env:CONTROL_PLANE_API_KEY='pre-existing-value'
-  try {
-    $result=Connect-TunnelRuntime $connectCfg $connectTunnel 'fixture-secret'
-    Assert ($result -eq $true)
-    Assert ($env:CONTROL_PLANE_API_KEY -ceq 'pre-existing-value')
-  } finally { Remove-Item Env:CONTROL_PLANE_API_KEY -ErrorAction SilentlyContinue }
-  $result=Connect-TunnelRuntime $connectCfg $connectTunnel 'fixture-secret'
-  Assert ($result -eq $true)
-  Assert (!(Test-Path Env:CONTROL_PLANE_API_KEY))
+Test 'Tunnel connect uses bounded argv and child-only environment key reference' {
+ & $module {param($root)
+   function script:Get-TunnelRuntimeContext {param($Config,$Tunnel) [pscustomobject]@{intentPath=$script:Intent;profileRoot=$script:Profile}}
+   $script:Intent=Join-Path $root 'intent.json';$script:Profile=$root;[IO.File]::WriteAllText($script:Intent,'{}')
+   function script:Invoke-TunnelNative {param($Config,$Tunnel,$Arguments,$TimeoutMs,$PlainKey)
+     if($TimeoutMs -ne 30000 -or $Arguments -contains $PlainKey -or $Arguments -notcontains 'env:CONTROL_PLANE_API_KEY' -or $PlainKey -cne 'fixture-secret'){throw 'bad bounded contract'}
+     [pscustomobject]@{Ok=$true;Stdout='fixture-output';ProcessId=900;CreatedAt='fixture';ExitedAt='fixture'}
+   }
+ } $root
+ $cfg=[pscustomobject]@{tunnelExe='C:\fixture\tunnel-client.exe';mcpUrl='http://127.0.0.1:17690/mcp'};$t=[pscustomobject]@{alias='fixture';tunnelId='fixture-id'}
+ $env:CONTROL_PLANE_API_KEY='fixture-ambient'
+ try{$v=Connect-TunnelRuntime $cfg $t 'fixture-secret';Assert ($v.Ok -and !$v.Stdout -and $env:CONTROL_PLANE_API_KEY -ceq 'fixture-ambient')}finally{Remove-Item Env:CONTROL_PLANE_API_KEY -ErrorAction SilentlyContinue}
 }
 
 Remove-Item -LiteralPath $root -Recurse -Force

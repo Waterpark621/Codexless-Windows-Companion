@@ -4,6 +4,7 @@ Import-Module (Join-Path $PSScriptRoot 'PrivateConsole.psm1')
 Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1')
 Import-Module (Join-Path $PSScriptRoot 'PriorBootOwnership.psm1')
 Import-Module (Join-Path $PSScriptRoot 'GenerationIdentity.psm1')
+Import-Module (Join-Path $PSScriptRoot 'VerifiedTunnel.psm1') -DisableNameChecking
 
 function Get-ProcessIdentity {
     param([int]$ProcessId)
@@ -89,6 +90,7 @@ function Get-HouseholdRuntimeState {
         $status = Get-TunnelStatus $cfg $tunnel
         $alive = ($null -ne $status -and $status.process_running -eq $true)
         if ($alive) {
+            try{if(!(Test-OwnedTunnel $launcher $cfg $tunnel $status)){$piecesVerified=$false}}catch{$piecesVerified=$false}
             $tunnelPresent = $true
             # Current official status exposes process.pid; an absent/invalid nested PID fails closed.
             $identity = $null
@@ -99,7 +101,7 @@ function Get-HouseholdRuntimeState {
             # Existing aliases are reused, never replaced or registered anew.
             if ($null -eq $identity -or $null -eq $receipt -or $identity.userSid -ne $Definition.UserSid -or $identity.executable -ine $cfg.tunnelExe -or $identity.createdAt -lt $receipt.createdAt -or !$status.PSObject.Properties['tunnel_id'] -or $status.tunnel_id -ne $tunnel.tunnelId) { $piecesVerified = $false }
         }
-        $tunnels += [pscustomobject]@{ alias=$tunnel.alias; alive=$alive; ready=($alive -and $status.ready -eq $true) }
+        $tunnels += [pscustomobject]@{ alias=$tunnel.alias; alive=$alive; ready=($alive -and $status.PSObject.Properties['healthy'] -and $status.healthy -is [bool] -and $status.healthy -and $status.PSObject.Properties['ready'] -and $status.ready -is [bool] -and $status.ready) }
     }
     [pscustomobject]@{ taskState=$taskState; hostPresent=($null -ne $hostIdentity); ownerVerified=$ownerVerified; piecesVerified=$piecesVerified; listenerPresent=$listenerPresent; tunnelPresent=$tunnelPresent; tunnels=$tunnels; cleanupRequired=$cleanupRequired; cleanupState=$cleanupState }
 }

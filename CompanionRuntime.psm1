@@ -1,4 +1,6 @@
 Set-StrictMode -Version Latest
+Import-Module (Join-Path $PSScriptRoot 'BoundedNative.psm1')
+Import-Module (Join-Path $PSScriptRoot 'ArtifactProvenance.psm1')
 
 $script:SupportedHostContractVersion = 'codexless-public-preview-v1'
 $script:QualifiedCodexlessRelease = [pscustomobject]@{
@@ -301,38 +303,66 @@ function Get-CodexlessPrivateConsoleCommand {
     $d+"hadNodeOptions=Test-Path Env:NODE_OPTIONS; "+$d+"previousNodeOptions=if("+$d+"hadNodeOptions){[string]"+$d+"env:NODE_OPTIONS}else{"+$d+"null}; Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue; "+$d+"env:CODEX_TOOLBOX_PUBLIC_PORT='$port'; try { & '$node' '$launch' http; "+$d+"exitCode="+$d+"LASTEXITCODE } finally { if("+$d+"hadNodeOptions){"+$d+"env:NODE_OPTIONS="+$d+"previousNodeOptions}else{Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue}; "+$d+"previousNodeOptions="+$d+"null }; exit "+$d+"exitCode"
 }
 
+function Get-TunnelRuntimeContext($Config,$Tunnel) {
+    try {
+        if($Tunnel.alias -cnotmatch '^[a-z0-9][a-z0-9-]{0,63}$'){throw 'invalid'}
+        $ownerPath=Join-Path $Config.companionRoot 'task-owner.json'
+        if((Get-Item -LiteralPath $ownerPath).Length -gt 16384){throw 'invalid'}
+        $cursor=$ownerPath
+        while($cursor){if((Test-Path -LiteralPath $cursor) -and ((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'invalid'};$cursor=Split-Path $cursor -Parent}
+        $owner=Get-Content -LiteralPath $ownerPath -Raw|ConvertFrom-Json
+        if($owner.version -ne 1 -or $owner.generationContract.version -ne 1 -or $owner.generationContract.sha256 -cnotmatch '^[0-9a-f]{64}$' -or $owner.pid -le 0 -or $owner.userSid -cne [Security.Principal.WindowsIdentity]::GetCurrent().User.Value -or $owner.launcherDirectory -ine $Config.companionRoot){throw 'invalid'}
+        $canonical=@($owner.generationContract.sha256,[string]$owner.pid,[string]$owner.createdAt,$owner.userSid) -join '|'
+        $sha=[Security.Cryptography.SHA256]::Create()
+        try{$id=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($canonical)))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
+        $state=Join-Path (Join-Path (Join-Path $Config.companionRoot 'tunnel-runtime') $id) $Tunnel.alias
+        Resolve-CompanionLocalPath $state 'tunnel namespace' Directory|Out-Null
+        $cursor=$state
+        while($cursor){if((Test-Path -LiteralPath $cursor) -and ((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'invalid'};$cursor=Split-Path $cursor -Parent}
+        [pscustomobject]@{stateRoot=$state;profileRoot=(Join-Path $state 'profiles');intentPath=(Join-Path $state 'connect-intent.json');owner=$owner;generationSha256=$owner.generationContract.sha256}
+    }catch{throw 'TUNNEL_GENERATION_CONTEXT_INVALID'}
+}
+
+function Invoke-TunnelNative($Config,$Tunnel,[string[]]$Arguments,[int]$TimeoutMs=5000,[string]$PlainKey,[string]$StateRoot,[IntPtr]$GuardHandle=[IntPtr]::Zero) {
+    $context=Get-TunnelRuntimeContext $Config $Tunnel
+    $policy=Get-ArtifactPolicy tunnel
+    $environment=@{TUNNEL_CLIENT_STATE_DIR=$context.stateRoot;TUNNEL_CLIENT_PROFILE_DIR=$context.profileRoot}
+    if($StateRoot){Resolve-CompanionLocalPath $StateRoot 'stop namespace' Directory -MustExist|Out-Null;$environment.TUNNEL_CLIENT_STATE_DIR=$StateRoot}
+    if($PlainKey){$environment.CONTROL_PLANE_API_KEY=$PlainKey}
+    try{Invoke-BoundedNative -Executable $Config.tunnelExe -ExpectedSha256 $policy.executableSha256 -Arguments $Arguments -WorkingDirectory $Config.companionRoot -TimeoutMs $TimeoutMs -OutputLimit 65536 -Environment $environment -GuardHandle $GuardHandle}
+    finally{$environment.Clear();$PlainKey=$null}
+}
+
 function Get-TunnelStatus {
     param($Config,$Tunnel)
     if ($null -eq $Config.tunnelExe) { return $null }
     try {
-        $raw=& $Config.tunnelExe runtimes status $Tunnel.alias --json 2>$null|Out-String
-        if([string]::IsNullOrWhiteSpace($raw)){return $null}
-        $raw|ConvertFrom-Json
+        $result=Invoke-TunnelNative $Config $Tunnel @('runtimes','status',[string]$Tunnel.alias,'--json')
+        if(!$result.Ok -or [string]::IsNullOrWhiteSpace($result.Stdout)){return $null}
+        $status=$result.Stdout|ConvertFrom-Json
+        if($status.alias -cne $Tunnel.alias -or $status.tunnel_id -cne $Tunnel.tunnelId -or $status.process_running -isnot [bool]){return $null}
+        $status
     } catch { $null }
+    finally{$result=$null}
 }
 
 function Test-TunnelReady {
     param($Config,$Tunnel)
     $status=Get-TunnelStatus $Config $Tunnel
-    ($null -ne $status -and $status.process_running -eq $true -and $status.ready -eq $true -and $status.tunnel_id -eq $Tunnel.tunnelId)
+    ($null -ne $status -and $status.process_running -eq $true -and $status.PSObject.Properties['healthy'] -and $status.healthy -is [bool] -and $status.healthy -and $status.PSObject.Properties['ready'] -and $status.ready -is [bool] -and $status.ready -and $status.tunnel_id -ceq $Tunnel.tunnelId)
 }
 
 function Connect-TunnelRuntime {
     param($Config,$Tunnel,[string]$PlainKey)
     if ($null -eq $Config.tunnelExe -or [string]::IsNullOrWhiteSpace($PlainKey)) { throw 'TUNNEL_CONNECT_INVALID' }
-    $hadPrevious=Test-Path Env:CONTROL_PLANE_API_KEY
-    $previousValue=if($hadPrevious){[string]$env:CONTROL_PLANE_API_KEY}else{$null}
-    $env:CONTROL_PLANE_API_KEY=$PlainKey
+    $context=Get-TunnelRuntimeContext $Config $Tunnel
+    if(!(Test-Path -LiteralPath $context.intentPath -PathType Leaf)){throw 'TUNNEL_CONNECT_INTENT_REQUIRED'}
     try {
-        & $Config.tunnelExe runtimes connect --alias $Tunnel.alias --profile $Tunnel.alias --profile-dir $Config.profileDir --tunnel-id $Tunnel.tunnelId --runtime-api-key env:CONTROL_PLANE_API_KEY --mcp-server-url $Config.mcpUrl *> $null
-        if($LASTEXITCODE -ne 0){throw 'TUNNEL_CONNECT_FAILED'}
-        $true
-    } finally {
-        if($hadPrevious){$env:CONTROL_PLANE_API_KEY=$previousValue}
-        else{Remove-Item Env:CONTROL_PLANE_API_KEY -ErrorAction SilentlyContinue}
-        $previousValue=$null
-        $PlainKey=$null
-    }
+        $result=Invoke-TunnelNative $Config $Tunnel @('runtimes','connect','--alias',[string]$Tunnel.alias,'--profile',[string]$Tunnel.alias,'--profile-dir',$context.profileRoot,'--tunnel-id',[string]$Tunnel.tunnelId,'--runtime-api-key','env:CONTROL_PLANE_API_KEY','--mcp-server-url',[string]$Config.mcpUrl,'--json') 30000 $PlainKey
+        if(!$result.Ok){if($result.Code -ceq 'NATIVE_SECURITY_POLICY_UNSUPPORTED'){throw 'TUNNEL_SECURITY_POLICY_UNSUPPORTED: Windows refused the approved unsigned client. Do not bypass security controls.'};throw 'TUNNEL_CONNECT_UNCERTAIN: Generation is fenced; verify recovery before retry.'}
+        $result.Stdout=$null
+        $result
+    } finally { $PlainKey=$null }
 }
 
 function Write-CompanionLog {
@@ -350,4 +380,4 @@ function Write-CompanionLog {
     Add-Content -LiteralPath $path -Value "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $Message"
 }
 
-Export-ModuleMember -Function Get-CompanionConfig,Get-CodexlessReleaseIdentity,Get-ConfiguredTunnels,Get-PlainRuntimeKey,Test-TcpPort,Test-CodexlessReady,Get-CodexlessPrivateConsoleCommand,Get-TunnelStatus,Test-TunnelReady,Connect-TunnelRuntime,Write-CompanionLog
+Export-ModuleMember -Function Get-CompanionConfig,Get-CodexlessReleaseIdentity,Get-ConfiguredTunnels,Get-PlainRuntimeKey,Test-TcpPort,Test-CodexlessReady,Get-CodexlessPrivateConsoleCommand,Get-TunnelRuntimeContext,Invoke-TunnelNative,Get-TunnelStatus,Test-TunnelReady,Connect-TunnelRuntime,Write-CompanionLog

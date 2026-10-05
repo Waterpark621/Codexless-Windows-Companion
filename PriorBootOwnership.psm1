@@ -69,7 +69,7 @@ function Get-PriorBootEvidence($Definition,$Config,$Tunnels,[DateTime]$Boot) {
             $time = ConvertTo-ReceiptUtc $marker.recordedAt
         } else {
             $id = 0
-            if ($record.version -ne 1 -or ![int]::TryParse([string]$record.pid,[ref]$id) -or $id -le 0 -or $record.userSid -cne $Definition.UserSid -or $pids -contains $id) { throw 'RECOVERY_RECEIPT_INVALID' }
+            if ($record.version -ne $(if($name.StartsWith('tunnel-owners\')){2}else{1}) -or ![int]::TryParse([string]$record.pid,[ref]$id) -or $id -le 0 -or $record.userSid -cne $Definition.UserSid -or $pids -contains $id) { throw 'RECOVERY_RECEIPT_INVALID' }
             $pids += $id
             $time = ConvertTo-ReceiptUtc $record.createdAt
             if ($name -eq 'codexless-console-owner.json') {
@@ -84,7 +84,12 @@ function Get-PriorBootEvidence($Definition,$Config,$Tunnels,[DateTime]$Boot) {
                 $sha = [Security.Cryptography.SHA256]::Create()
                 try { $digest = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($aliases[$alias].tunnelId)))).Replace('-','').ToLowerInvariant() } finally { $sha.Dispose() }
                 $native = ConvertTo-ReceiptUtc $record.nativeCreatedAt
-                if ($record.alias -cne $alias -or $record.executable -ine $Config.tunnelExe -or $record.registrationDigest -cne $digest -or $native -lt $time -or ($native-$time).Ticks -gt 9 -or $native -ge $Boot) { throw 'RECOVERY_TUNNEL_INVALID' }
+                $connectStart=ConvertTo-ReceiptUtc $record.connectCreatedAt
+                $connectExit=ConvertTo-ReceiptUtc $record.connectExitedAt
+                $context=Get-TunnelRuntimeContext $Config $aliases[$alias]
+                $sha=[Security.Cryptography.SHA256]::Create()
+                try{$namespace=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($context.stateRoot)))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
+                if ($record.connectPid -le 0 -or $connectStart -lt $created -or $connectStart -gt $native -or $connectExit -lt $native -or $connectExit -ge $Boot -or $record.namespaceDigest -cne $namespace -or $record.generationSha256 -cne $owner.generationContract.sha256 -or $record.executableSha256 -cne 'fcc85a69ec0ad82518e4f8964f60c45e31787957782a0fc9c1b0c44e82d61b9b' -or $record.namespaceDigest -cnotmatch '^[0-9a-f]{64}$' -or $record.alias -cne $alias -or $record.executable -ine $Config.tunnelExe -or $record.registrationDigest -cne $digest -or $native -lt $time -or ($native-$time).Ticks -gt 9 -or $native -ge $Boot) { throw 'RECOVERY_TUNNEL_INVALID' }
             }
         }
         if ($time -lt $created -or $time -ge $Boot) { throw 'RECOVERY_GENERATION_INCONSISTENT' }
@@ -107,22 +112,9 @@ function Get-RecoveryRunValues {
 }
 
 function Get-RecoveryTunnelStatus($Config,$Tunnel) {
-    # Bound the read-only status command. Timeout refuses recovery; it never kills
-    # even this probe, and never invokes the client's connect/stop commands.
-    $start = New-Object Diagnostics.ProcessStartInfo
-    $start.FileName = $Config.tunnelExe
-    $start.Arguments = 'runtimes status '+$Tunnel.alias+' --json'
-    $start.UseShellExecute = $false; $start.CreateNoWindow = $true
-    $start.RedirectStandardOutput = $true; $start.RedirectStandardError = $true
-    $process = New-Object Diagnostics.Process
-    $process.StartInfo = $start
-    try {
-        if (!$process.Start()) { throw 'RECOVERY_STATUS_START_FAILED' }
-        $stdout = $process.StandardOutput.ReadToEndAsync()
-        $stderr = $process.StandardError.ReadToEndAsync()
-        if (!$process.WaitForExit(5000) -or !$stdout.Wait(1000) -or !$stderr.Wait(1000) -or $process.ExitCode -ne 0 -or $stdout.Result.Length -gt 65536) { throw 'RECOVERY_STATUS_UNAVAILABLE' }
-        $stdout.Result | ConvertFrom-Json -ErrorAction Stop
-    } finally { $process.Dispose() }
+    $status=Get-TunnelStatus $Config $Tunnel
+    if($null -eq $status){throw 'RECOVERY_STATUS_UNAVAILABLE'}
+    $status
 }
 
 function Assert-PriorBootAbsence($Definition,$Config,$Tunnels,$Evidence) {

@@ -99,6 +99,11 @@ function Start-TunnelIfNeeded($cfg,$tunnel) {
         Write-LauncherLog "Tunnel '$($tunnel.alias)' was not connected: Codexless readiness is unverified."
         return $false
     }
+    if (Test-TunnelGenerationUnlaunched $cfg $tunnel) {
+        $plain=Get-PlainRuntimeKey $tunnel
+        try { return (Start-OwnedTunnel $LauncherDirectory $cfg $tunnel $plain) }
+        finally { $plain=$null }
+    }
     if (Test-TunnelReady $cfg $tunnel) {
         $readyStatus=Get-TunnelStatus $cfg $tunnel
         try {
@@ -125,18 +130,13 @@ function Start-TunnelIfNeeded($cfg,$tunnel) {
     }
     $previous=Open-OwnedTunnelLifetime $LauncherDirectory $cfg $tunnel $status
     if($null -ne $previous){$previous.lease.Dispose();throw 'TUNNEL_LIFETIME_MISMATCH'}
-    Write-LauncherLog 'Automatic tunnel connect is disabled in the public preview until launch provenance is qualified.'
+    Write-LauncherLog 'Tunnel generation remains fenced; explicit recovery is required before any replacement.'
     $false
 }
 
 function Stop-HouseholdTunnel($cfg,$tunnel) {
-    $binding=Open-OwnedTunnelLifetime $LauncherDirectory $cfg $tunnel (Get-TunnelStatus $cfg $tunnel)
-    if($null -eq $binding){return}
-    try{
-        & $cfg.tunnelExe runtimes stop $tunnel.alias 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'HOUSEHOLD_TUNNEL_STOP_FAILED' }
-        Complete-OwnedTunnelStop $binding
-    }finally{$binding.lease.Dispose()}
+    # Official runtimes stop only, through the verified bounded lifecycle.
+    Stop-OwnedTunnel $LauncherDirectory $cfg $tunnel
 }
 
 function Stop-ManagedPieces($cfg) {

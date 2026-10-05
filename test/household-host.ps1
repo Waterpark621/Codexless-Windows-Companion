@@ -13,6 +13,9 @@ function Assert-True([bool]$Value,[string]$Message='assertion failed') { if (!$V
 function Assert-Throws([scriptblock]$Body,[string]$Code) { try { & $Body | Out-Null } catch { if ($_.Exception.Message.Contains($Code)) { return }; throw }; throw "Expected $Code" }
 function Test([string]$Name,[scriptblock]$Body) { & $Body; $results.Add($Name); Write-Output "PASS $Name" }
 $mock = [pscustomobject]@{ready=$false;runtimeReady=$true;tunnelOwned=$true;listening=$true;status=[pscustomobject]@{process_running=$false};connects=0;logs=[Collections.Generic.List[string]]::new();receiptPresent=$false;starts=0;ownerValid=$true;stopRequested=$false;publishStop=$false;trackingEvents=[Collections.Generic.List[string]]::new();now=[DateTime]'2026-10-03T00:00:00Z';stopError='';consoleError='';consoleStops=0;writerFails=$false;cleanupStages=[Collections.Generic.List[string]]::new();removes=[Collections.Generic.List[string]]::new()}
+function Test-TunnelGenerationUnlaunched {param($cfg,$tunnel) $script:Virgin}
+function Start-OwnedTunnel {param($launcher,$cfg,$tunnel,$key) $mock.connects++;$true}
+$script:Virgin=$false
 function Test-TunnelReady { param($cfg,$tunnel) $mock.ready }
 function Test-TcpPort { param([int]$Port) $mock.listening }
 function Test-CodexlessReady { param($cfg) $mock.runtimeReady }
@@ -54,6 +57,17 @@ $script:HouseholdStartedAt=[DateTime]'2026-10-03T00:00:00Z'
 $script:HouseholdWorkingDirectory='already-authorized-fixture-root'
 $cfg=[pscustomobject]@{port=12345;projectPath='already-authorized-fixture-root'}
 $tunnel=[pscustomobject]@{alias='fixture'}
+Test 'Fresh generation starts only after exact listener and readiness proof' {
+    $script:Virgin=$true;$before=$mock.connects
+    Assert-True (Start-TunnelIfNeeded $cfg $tunnel)
+    Assert-True ($mock.connects -eq $before+1)
+    $mock.connects=0;$script:Virgin=$false
+}
+Test 'Fresh generation never connects through foreign listener' {
+    $script:Virgin=$true;$mock.ownerValid=$false;$before=$mock.connects
+    Assert-True (!(Start-TunnelIfNeeded $cfg $tunnel));Assert-True ($mock.connects -eq $before)
+    $mock.ownerValid=$true;$script:Virgin=$false
+}
 Test 'Ready Companion-owned alias is reused without another connect' {
     $mock.ready=$true;$mock.tunnelOwned=$true
     Assert-True (Start-TunnelIfNeeded $cfg $tunnel)
@@ -84,12 +98,12 @@ Test 'Unknown alias state does not permit another client' {
     Assert-True (!(Start-TunnelIfNeeded $cfg $tunnel))
     Assert-True ($mock.connects -eq 0)
 }
-Test 'Known exited alias is not auto-connected in public preview' {
+Test 'Existing generation never starts an automatic replacement' {
     $mock.ready=$false;$mock.status=[pscustomobject]@{process_running=$false}
     $before=$mock.connects
     Assert-True (!(Start-TunnelIfNeeded $cfg $tunnel))
     Assert-True ($mock.connects -eq $before)
-    Assert-True (@($mock.logs | Where-Object { $_ -match 'Automatic tunnel connect is disabled' }).Count -gt 0)
+    Assert-True (@($mock.logs | Where-Object { $_ -match 'generation remains fenced' }).Count -gt 0)
 }
 Test 'Malformed running state never authorizes another tunnel connect' {
     $mock.ready=$false;$before=$mock.connects

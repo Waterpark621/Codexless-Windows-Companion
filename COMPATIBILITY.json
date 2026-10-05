@@ -22,14 +22,15 @@
     "hostContractVersion": "codexless-public-preview-v1"
   },
   "tunnelClient": {
-    "qualifiedVersion": null,
-    "defaultTunnelCount": 1
+    "qualifiedVersion": "0.0.14",
+    "defaultTunnelCount": 1,
+    "architecture": "windows-amd64"
   },
   "portability": {
     "portableRuntimeBinding": true,
     "installPlannerImplemented": true,
     "mutatingInstallEnabled": false,
-    "automaticTunnelConnectEnabled": false,
+    "automaticTunnelConnectEnabled": true,
     "doctorImplemented": true,
     "doctorAcceptanceV1Implemented": true,
     "qualifiedCodexlessBindingImplemented": true,
@@ -41,10 +42,10 @@
     "boundedNativeSubstrateImplemented": true,
     "friendInstallReady": false,
     "remainingBlockers": [
-      "tunnel launch provenance",
       "repair/uninstall/update rollback flows",
       "download provenance and distributable Node/tunnel binary qualification",
       "clean second-user/machine acceptance"
-    ]
+    ],
+    "tunnelLaunchProvenanceImplemented": true
   }
 }

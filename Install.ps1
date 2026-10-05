@@ -76,7 +76,7 @@ if(!$NoTunnel){
         tunnelId=$TunnelId
         executable=$tunnelExeResolved
         credentialStorage='planned: current-user Windows DPAPI under Companion install root'
-        automaticConnect='disabled in public preview pending launch-provenance qualification'
+        automaticConnect='qualified exact generation only; mutating installer remains disabled'
     }
 }
 
@@ -99,7 +99,6 @@ $plan=[pscustomobject]@{
     port=$Port
     tunnel=$tunnelPlan
     blockers=@(
-        'tunnel launch provenance',
         'repair/uninstall/update rollback',
         'clean second-user/machine acceptance'
     )
