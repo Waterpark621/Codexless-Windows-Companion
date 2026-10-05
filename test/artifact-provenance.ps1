@@ -29,4 +29,58 @@ Test 'Archive byte limit is checked before mutation' {$f=Fixture @('safe.txt');$
 Test 'Expanded byte limit is checked before mutation' {$f=Fixture @('safe.txt');$f.policy.maxExpandedBytes=1;Refuses $f}
 Test 'Entry count limit is checked before mutation' {$f=Fixture @('one','two');$f.policy.maxEntries=1;Refuses $f}
 Test 'Existing destination is never overwritten' {$f=Fixture @('safe.txt');New-Item -ItemType Directory -Path $f.destination|Out-Null;'sentinel'|Set-Content -LiteralPath (Join-Path $f.destination 'sentinel');$failed=$false;try{Expand-QualifiedArtifact node $f.archive $f.destination|Out-Null}catch{$failed=$true};Assert $failed;Assert ((Get-Content -LiteralPath (Join-Path $f.destination 'sentinel')) -ceq 'sentinel')}
-Write-Output ("RESULT: {0}/{0} PASS; synthetic ZIP fixtures only; no downloads or binary execution" -f $passed)
+
+# Exercise the production streaming download path against an ephemeral server.
+# Only policy lookup is injected in this test module; production has no hook.
+$node=(Get-Command node.exe).Source
+$serverScript=Join-Path $root 'download-server.mjs'
+$infoPath=Join-Path $root 'download-server.json'
+$hitsPath=Join-Path $root 'download-hits.json'
+$f=Fixture @('release/payload.txt')
+[IO.File]::WriteAllText($serverScript,@'
+import http from 'node:http';
+import fs from 'node:fs';
+const payload=fs.readFileSync(process.argv[2]);
+const hits=[];
+const server=http.createServer((req,res)=>{
+  hits.push(req.url);fs.writeFileSync(process.argv[4],JSON.stringify(hits));
+  if(req.url==='/redirect'){res.writeHead(302,{location:'/good'});res.end();return;}
+  if(req.url==='/slow'){
+    res.writeHead(200);res.write('x');
+    const timer=setInterval(()=>res.write('x'),100);
+    res.on('close',()=>clearInterval(timer));return;
+  }
+  if(req.url==='/large'){res.writeHead(200);res.end(Buffer.alloc(200000));return;}
+  res.writeHead(200);res.end(payload);
+});
+server.listen(0,'127.0.0.1',()=>fs.writeFileSync(process.argv[3],JSON.stringify({port:server.address().port})));
+const watcher=setInterval(()=>{if(fs.existsSync(process.argv[5])){clearInterval(watcher);server.close(()=>process.exit(0));}},50);
+'@,[Text.UTF8Encoding]::new($false))
+$quitPath=Join-Path $root 'server-stop.flag'
+$serverArgs=@($serverScript,$f.archive,$infoPath,$hitsPath,$quitPath)|ForEach-Object {'"'+$_+'"'}
+$server=Start-Process -FilePath $node -ArgumentList $serverArgs -WindowStyle Hidden -PassThru
+try {
+    $deadline=[DateTime]::UtcNow.AddSeconds(5)
+    while(!(Test-Path -LiteralPath $infoPath)){if([DateTime]::UtcNow -ge $deadline){throw 'fixture timeout'};Start-Sleep -Milliseconds 25}
+    $port=[int]((Get-Content -LiteralPath $infoPath -Raw|ConvertFrom-Json).port)
+    function Set-DownloadPolicy([string]$Mode){
+        $p=[pscustomobject]@{role='node';version='fixture';url="http://127.0.0.1:$port/$Mode";sha256=(Get-FileHash -LiteralPath $f.archive -Algorithm SHA256).Hash.ToLowerInvariant();maxArchiveBytes=1048576}
+        & $module {param($p) $script:ReviewPolicy=$p} $p
+        $p
+    }
+    function Download-Refuses([string]$Mode,[int]$Timeout=5000){
+        $dest=Join-Path $root ([Guid]::NewGuid().ToString('N'));$failed=$false
+        try{Save-QualifiedArtifact node $dest -TimeoutMs $Timeout|Out-Null}catch{$failed=$_.Exception.Message -ceq 'PROVENANCE_DOWNLOAD_FAILED: Partial stage retained; nothing was promoted or executed.'}
+        Assert $failed;Assert (!(Test-Path -LiteralPath (Join-Path $dest 'verified.zip')))
+    }
+    Test 'Download success requires exact pinned archive bytes without promotion' {Set-DownloadPolicy good|Out-Null;$dest=Join-Path $root ([Guid]::NewGuid().ToString('N'));$r=Save-QualifiedArtifact node $dest;Assert (!$r.promoted);Assert ($r.sha256 -ceq (Get-FileHash -LiteralPath $r.archivePath -Algorithm SHA256).Hash.ToLowerInvariant())}
+    Test 'Redirect is rejected without following target' {$p=Set-DownloadPolicy redirect;Download-Refuses redirect;$after=Get-Content -LiteralPath $hitsPath -Raw|ConvertFrom-Json;Assert ($after[-1] -ceq '/redirect')}
+    Test 'Checksum substitution never creates a verified archive' {$p=Set-DownloadPolicy good;$p.sha256='0'*64;Download-Refuses good}
+    Test 'Stream exceeding byte limit is rejected' {$p=Set-DownloadPolicy large;$p.maxArchiveBytes=1024;Download-Refuses large}
+    Test 'Trickling response obeys overall deadline' {Set-DownloadPolicy slow|Out-Null;$clock=[Diagnostics.Stopwatch]::StartNew();Download-Refuses slow 1000;Assert ($clock.ElapsedMilliseconds -lt 2500)}
+} finally {
+    New-Item -ItemType File -Path $quitPath -Force|Out-Null
+    if(!$server.WaitForExit(5000)){throw 'fixture did not cooperatively exit'}
+    $server.Dispose()
+}
+Write-Output ("RESULT: {0}/{0} PASS; synthetic ZIP and loopback streaming fixtures; no external downloads or artifact execution" -f $passed)
