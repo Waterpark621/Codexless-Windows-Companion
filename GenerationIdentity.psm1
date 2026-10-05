@@ -14,7 +14,7 @@ function Get-CompanionGenerationContract($Config) {
             if([string]::IsNullOrWhiteSpace([string]$release.$field)){throw 'invalid'}
         }
         if($release.buildId -cnotmatch '^[0-9a-f]{64}$' -or $release.sourceRevision -cnotmatch '^[0-9a-f]{40}$' -or $release.manifestSha256 -cnotmatch '^[0-9a-f]{64}$'){throw 'invalid'}
-        $files=@(Get-ChildItem -LiteralPath $PSScriptRoot -File | Where-Object {$_.Extension -in @('.ps1','.psm1','.mjs') -or $_.Name -eq 'VERSION'} | Sort-Object Name | ForEach-Object {
+        $files=@(Get-ChildItem -LiteralPath $PSScriptRoot -File | Where-Object {$_.Extension -in @('.ps1','.psm1','.mjs') -or $_.Name -in @('VERSION','ARTIFACT-POLICY.json','COMPATIBILITY.json')} | Sort-Object Name | ForEach-Object {
             if($_.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'invalid'}
             [ordered]@{name=$_.Name;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
         })

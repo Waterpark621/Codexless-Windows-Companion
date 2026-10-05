@@ -36,6 +36,8 @@
     "exactReadinessIdentityImplemented": true,
     "nodeOptionsSanitizedBeforeLaunch": true,
     "generationBoundRecoveryImplemented": true,
+    "artifactVerificationFrameworkImplemented": true,
+    "nodeArchivePinned": true,
     "friendInstallReady": false,
     "remainingBlockers": [
       "tunnel launch provenance",

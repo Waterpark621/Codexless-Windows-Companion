@@ -37,6 +37,8 @@
 - [x] Bind settings + qualified Codexless release/build identity to each owner generation and revalidate it throughout prior-boot recovery.
 - [x] Reproduce the qualified Codexless npm production dependency closure from its frozen shrinkwrap and control inherited NODE_OPTIONS.
 - [ ] Qualify the distributable Node runtime binary/version and tunnel-client binary/version/provenance.
+- [x] Pin the official Node 24.12.0 Windows x64 archive and implement verified, bounded staging with safe ZIP extraction.
+- [ ] Select and qualify the portable tunnel-client distribution/version/archive checksum; bind the published Codexless download artifact.
 - [ ] Establish exact tunnel launch provenance before re-enabling automatic `runtimes connect`.
 - [ ] Add bounded native tunnel status/connect/stop execution.
 - [ ] Add an incomplete-install fence plus ownership-verified repair/uninstall.
