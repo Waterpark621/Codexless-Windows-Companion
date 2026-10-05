@@ -1,0 +1,7 @@
+# Local transaction substrate
+
+InstallTransaction.psm1 implements local, bounded inventory staging and a destination-local sanitized incomplete-install fence. Each mutating boundary is journaled before its adapter operation. Atomic journal replacement retains previous sanitized versions. A per-root Windows mutex refuses concurrent transaction callers. Exact owner/root/payload digests bind receipts to the destination and immutable generation. Unknown roots and existing tasks are refused.
+
+Repair only restarts an intact, independently verified owned generation; it cannot overwrite damaged or foreign material. Uninstall requires verified stop and exact task ownership, then removes listed unchanged payload files without recursive deletion. Unknown root/project data is preserved. Failed or interrupted operations retain the fence and refuse ordinary operation. A verified uninstall tombstone permits reinstall into the same retained root with a new generation.
+
+This is an internal transaction engine. Its required task/provenance/runtime adapter is an authority boundary, not a bypass or test hook in Install.ps1. Synthetic tests provide adapters; production Install.ps1 still rejects mutation. Real install acceptance requires an independently qualified package/binary adapter, exact task registration and ownership/readiness verification. The existing live per-user task cannot be used as the test target. No friend-install readiness is claimed.
