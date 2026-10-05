@@ -17,27 +17,33 @@
 - [x] Bind readiness to /readyz, release version, and public surface.
 - [x] Preserve same-boot fail-closed and verified prior-boot recovery.
 
-## Implemented but not yet clean-machine qualified
+## Public-preview safety gate
 
-- [x] Fresh-install-only installer accepts explicit Codexless release, Node/project path, port, and optional tunnel-client inputs.
-- [x] Runtime API key is entered on the destination PC and stored only as current-user Windows DPAPI ciphertext.
-- [x] Installer stages and validates its payload before promoting the Companion directory.
-- [x] Installer refuses an existing task/non-empty install instead of adopting or overwriting it.
+- [x] `Install.ps1 -PlanOnly` validates the proposed release, project, Node, port and optional tunnel inputs without mutation.
+- [x] `Install.ps1` refuses mutating installation by default with `INSTALL_DISABLED_PUBLIC_PREVIEW`.
+- [x] Fully qualified drive paths are required; root-relative, drive-relative and UNC inputs are rejected.
+- [x] Existing live tunnel processes require an exact pre-existing Companion ownership receipt; they are never adopted from creation time alone.
+- [x] Automatic tunnel connect is disabled pending a positively attributable launch-provenance contract.
+- [x] Tunnel-client connect output is suppressed; fixed diagnostics are used instead of persisting raw client/exception text.
+- [x] A pre-existing runtime-key environment value is restored after a connect helper call.
+- [x] DPAPI destination-local credential storage is fixture-tested, but the preview installer does not collect/store a key.
 - [x] Read-only Doctor checks settings, release identity, task/owner state, readiness, and official tunnel status.
-- [x] Friendly Start / Stop / Restart / Status entrypoints added.
-- [ ] Add Browser-backend connectivity probe to Doctor.
+- [x] Friendly Start / Stop / Restart / Status development entrypoints exist.
+- [ ] Add direct listener/tunnel ownership acceptance and Browser-backend connectivity to Doctor.
 
 ## Required before friend install
 
-- [ ] Add download/provenance flow for a qualified Codexless fork release and tunnel-client binary.
-- [ ] Add uninstall / repair commands with one rollback generation.
-- [ ] Add update transaction: detect -> stage -> verify -> stop -> promote -> restart -> rollback on failure.
-- [ ] Qualify one tagged Waterpark621/Codexless release and one tunnel-client generation.
-- [ ] Validate archive provenance/checksum before installing a downloaded release.
+- [ ] Bind settings + qualified Codexless release/build identity to each owner generation and revalidate it throughout prior-boot recovery.
+- [ ] Qualify the Codexless dependency closure, Node runtime and tunnel-client binary/version; control inherited Node startup options.
+- [ ] Add direct listener/tunnel ownership and required Browser-backend checks to Doctor; pending required checks must not count as success.
+- [ ] Establish exact tunnel launch provenance before re-enabling automatic `runtimes connect`.
+- [ ] Add bounded native tunnel status/connect/stop execution.
+- [ ] Add an incomplete-install fence plus ownership-verified repair/uninstall.
+- [ ] Add update + rollback transaction: detect -> stage -> verify -> stop -> promote -> restart -> rollback on failure.
+- [ ] Add download/provenance flow and archive checksum verification for qualified binaries.
 - [ ] Test clean installation under a different Windows user and different paths.
-- [ ] Test duplicate Start, Stop -> Start, Desktop close/reopen, and full Windows reboot recovery.
-- [ ] Test interrupted install/update and rollback.
-- [ ] Run privacy scan and release-archive content scan before GitHub publication.
+- [ ] Test concurrency, interruption, duplicate Start, Stop -> Start, Desktop close/reopen, shutdown and full Windows reboot recovery.
+- [ ] Run current-tree, complete-history and release-archive privacy scans before friend distribution.
 
 ## Deferred from v0
 

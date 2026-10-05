@@ -38,6 +38,11 @@ Test 'Alive receipt captures exact native lifetime and acquires a held binding' 
  Assert ($null -ne $binding -and !$binding.lease.disposed -and (Test-Path -LiteralPath $path))
  $binding.lease.Dispose()
 }
+Test 'Existing-runtime ownership check requires the exact saved receipt and disposes its lease' {
+ Record-Fixture
+ Assert (Test-OwnedTunnel $root $cfg $tunnel $status)
+ Assert (& $module {$script:Leases[$script:Leases.Count-1].disposed})
+}
 Test 'Unavailable or malformed liveness never opens a binding' {
  foreach($bad in @($null,[pscustomobject]@{},[pscustomobject]@{process_running='false'},[pscustomobject]@{process_running=0})) {Reject {Open-OwnedTunnelLifetime $root $cfg $tunnel $bad} 'TUNNEL_STATUS_UNKNOWN'}
 }

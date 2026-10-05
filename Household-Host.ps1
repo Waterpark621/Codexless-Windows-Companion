@@ -95,8 +95,12 @@ function Start-TunnelIfNeeded($cfg,$tunnel) {
         return $false
     }
     if (Test-TunnelReady $cfg $tunnel) {
-        Record-OwnedTunnel $LauncherDirectory $cfg $tunnel (Get-TunnelStatus $cfg $tunnel) $script:HouseholdStartedAt
-        return $true
+        $readyStatus=Get-TunnelStatus $cfg $tunnel
+        try {
+            if (Test-OwnedTunnel $LauncherDirectory $cfg $tunnel $readyStatus) { return $true }
+        } catch { }
+        Write-LauncherLog 'Existing ready tunnel is not proven Companion-owned; it was not adopted.'
+        return $false
     }
     if (!(Test-TcpPort -Port ([int]$cfg.port))) { return $false }
     $status=Get-TunnelStatus $cfg $tunnel
@@ -105,31 +109,18 @@ function Start-TunnelIfNeeded($cfg,$tunnel) {
         return $false
     }
     if ($status.process_running -eq $true) {
-        Record-OwnedTunnel $LauncherDirectory $cfg $tunnel $status $script:HouseholdStartedAt
-        Write-LauncherLog "Tunnel '$($tunnel.alias)' is alive but degraded; waiting for official client recovery."
+        try {
+            if (Test-OwnedTunnel $LauncherDirectory $cfg $tunnel $status) {
+                Write-LauncherLog 'Companion-owned tunnel is alive but degraded; waiting for official client recovery.'
+                return $false
+            }
+        } catch { }
+        Write-LauncherLog 'Existing tunnel process is not proven Companion-owned; it was not adopted.'
         return $false
     }
     $previous=Open-OwnedTunnelLifetime $LauncherDirectory $cfg $tunnel $status
     if($null -ne $previous){$previous.lease.Dispose();throw 'TUNNEL_LIFETIME_MISMATCH'}
-    try {
-        $key=Get-PlainRuntimeKey $tunnel
-        Write-LauncherLog "Connecting configured tunnel alias '$($tunnel.alias)'."
-        $result=Connect-TunnelRuntime $cfg $tunnel $key
-        $key=$null
-        $connected=Get-TunnelStatus $cfg $tunnel
-        if($null -ne $connected -and $connected.PSObject.Properties['process_running'] -and $connected.process_running -eq $true){Record-OwnedTunnel $LauncherDirectory $cfg $tunnel $connected $script:HouseholdStartedAt}
-        if ($result.Trim()) { Write-LauncherLog "tunnel-client[$($tunnel.alias)]: $($result.Trim())" }
-    } catch { Write-LauncherLog "Tunnel '$($tunnel.alias)' connect failed: $($_.Exception.Message)"; return $false }
-    for ($attempt=0; $attempt -lt 20; $attempt++) {
-        if (Test-HouseholdStopRequested) { return $false }
-        Start-Sleep -Milliseconds 750
-        if (Test-TunnelReady $cfg $tunnel) {
-            Record-OwnedTunnel $LauncherDirectory $cfg $tunnel (Get-TunnelStatus $cfg $tunnel) $script:HouseholdStartedAt
-            Write-LauncherLog "Tunnel '$($tunnel.alias)' is ready."
-            return $true
-        }
-    }
-    Write-LauncherLog "Tunnel '$($tunnel.alias)' remains degraded after 15 seconds; host will check again."
+    Write-LauncherLog 'Automatic tunnel connect is disabled in the public preview until launch provenance is qualified.'
     $false
 }
 
@@ -138,7 +129,7 @@ function Stop-HouseholdTunnel($cfg,$tunnel) {
     if($null -eq $binding){return}
     try{
         & $cfg.tunnelExe runtimes stop $tunnel.alias 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "HOUSEHOLD_TUNNEL_STOP_FAILED: $($tunnel.alias)" }
+        if ($LASTEXITCODE -ne 0) { throw 'HOUSEHOLD_TUNNEL_STOP_FAILED' }
         Complete-OwnedTunnelStop $binding
     }finally{$binding.lease.Dispose()}
 }
@@ -187,7 +178,7 @@ function Invoke-HouseholdHostBody {
         $failure=$_
         try { Write-HouseholdCleanupState $LauncherDirectory $script:HouseholdStage $PID }
         catch { Write-LauncherLog 'HOUSEHOLD_CLEANUP_STATE_WRITE_FAILED: Ownership receipts were retained.' }
-        Write-LauncherLog "Task-owned Host fatal/degraded: $($failure.Exception.Message)"
+        Write-LauncherLog "Task-owned Host entered degraded state during stage '$script:HouseholdStage'."
         throw $failure
     }
 }

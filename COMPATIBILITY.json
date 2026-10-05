@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "packageKind": "codexless-windows-companion",
   "companionVersion": "0.1.0-dev",
-  "status": "portable-runtime-contract-not-installable",
+  "status": "public-preview-prep-nonmutating",
   "sourceLineage": {
     "validatedHouseholdCommit": "37686a932ff0c355d363cd4dc3bbf1a9c3a46dc1"
   },
@@ -22,15 +22,18 @@
   },
   "portability": {
     "portableRuntimeBinding": true,
-    "freshInstallerImplemented": true,
+    "installPlannerImplemented": true,
+    "mutatingInstallEnabled": false,
+    "automaticTunnelConnectEnabled": false,
     "doctorImplemented": true,
     "friendInstallReady": false,
     "remainingBlockers": [
-      "Browser-backend Doctor probe",
-      "repair/uninstall/update and rollback flows",
-      "download provenance for qualified binaries",
-      "qualified Codexless fork release",
-      "qualified tunnel-client release",
+      "qualified release/build trust binding",
+      "generation-bound prior-boot release identity",
+      "listener/tunnel ownership and Browser Doctor acceptance",
+      "tunnel launch provenance",
+      "repair/uninstall/update rollback flows",
+      "dependency and download provenance",
       "clean second-user/machine acceptance"
     ]
   }

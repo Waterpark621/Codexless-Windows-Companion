@@ -86,5 +86,28 @@ Test 'Relative tunnel profile and DPAPI key stay inside Companion root' {
   $plain=Get-PlainRuntimeKey $cfg.tunnels[0]
   try { Assert ($plain -ceq 'fixture-runtime-key') } finally { $plain=$null }
 }
+Test 'Root-relative drive-relative and UNC paths are rejected' {
+  $module=Get-Module CompanionRuntime
+  foreach($badPath in @('\Windows','C:Windows','\\server\share')) {
+    $failed=$false
+    try { & $module { param($p) Resolve-CompanionLocalPath $p 'fixture' } $badPath | Out-Null } catch { $failed=$_.Exception.Message -like 'COMPANION_SETTINGS_INVALID:*' }
+    Assert $failed
+  }
+}
+Test 'Tunnel connect suppresses client output and restores ambient runtime-key environment' {
+  $cmd=Join-Path $root 'fake-tunnel.cmd'
+  Set-Content -LiteralPath $cmd -Value '@echo should-not-be-returned& exit /b 0' -Encoding ascii
+  $connectCfg=[pscustomobject]@{tunnelExe=$cmd;profileDir=$root;mcpUrl='http://127.0.0.1:17690/mcp'}
+  $connectTunnel=[pscustomobject]@{alias='fixture';tunnelId='fixture-id'}
+  $env:CONTROL_PLANE_API_KEY='pre-existing-value'
+  try {
+    $result=Connect-TunnelRuntime $connectCfg $connectTunnel 'fixture-secret'
+    Assert ($result -eq $true)
+    Assert ($env:CONTROL_PLANE_API_KEY -ceq 'pre-existing-value')
+  } finally { Remove-Item Env:CONTROL_PLANE_API_KEY -ErrorAction SilentlyContinue }
+  $result=Connect-TunnelRuntime $connectCfg $connectTunnel 'fixture-secret'
+  Assert ($result -eq $true)
+  Assert (!(Test-Path Env:CONTROL_PLANE_API_KEY))
+}
 Remove-Item -LiteralPath $root -Recurse -Force
 Write-Output ("RESULT: {0}/{0} PASS; portable config/release contract only; no live deployment actions" -f $passed)

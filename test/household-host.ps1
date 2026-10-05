@@ -12,16 +12,17 @@ $results = [Collections.Generic.List[string]]::new()
 function Assert-True([bool]$Value,[string]$Message='assertion failed') { if (!$Value) { throw $Message } }
 function Assert-Throws([scriptblock]$Body,[string]$Code) { try { & $Body | Out-Null } catch { if ($_.Exception.Message.Contains($Code)) { return }; throw }; throw "Expected $Code" }
 function Test([string]$Name,[scriptblock]$Body) { & $Body; $results.Add($Name); Write-Output "PASS $Name" }
-$mock = [pscustomobject]@{ready=$false;runtimeReady=$true;listening=$true;status=[pscustomobject]@{process_running=$false};connects=0;logs=[Collections.Generic.List[string]]::new();receiptPresent=$false;starts=0;ownerValid=$true;stopRequested=$false;publishStop=$false;trackingEvents=[Collections.Generic.List[string]]::new();now=[DateTime]'2026-10-03T00:00:00Z';stopError='';consoleError='';consoleStops=0;writerFails=$false;cleanupStages=[Collections.Generic.List[string]]::new();removes=[Collections.Generic.List[string]]::new()}
+$mock = [pscustomobject]@{ready=$false;runtimeReady=$true;tunnelOwned=$true;listening=$true;status=[pscustomobject]@{process_running=$false};connects=0;logs=[Collections.Generic.List[string]]::new();receiptPresent=$false;starts=0;ownerValid=$true;stopRequested=$false;publishStop=$false;trackingEvents=[Collections.Generic.List[string]]::new();now=[DateTime]'2026-10-03T00:00:00Z';stopError='';consoleError='';consoleStops=0;writerFails=$false;cleanupStages=[Collections.Generic.List[string]]::new();removes=[Collections.Generic.List[string]]::new()}
 function Test-TunnelReady { param($cfg,$tunnel) $mock.ready }
 function Test-TcpPort { param([int]$Port) $mock.listening }
 function Test-CodexlessReady { param($cfg) $mock.runtimeReady }
 function Get-CodexlessPrivateConsoleCommand { param($cfg) 'fixture-direct-launch:'+([string]$cfg.port) }
 function Get-TunnelStatus { param($cfg,$tunnel) $mock.status }
 function Get-PlainRuntimeKey { param($tunnel) 'fixture-key-not-a-credential' }
-function Record-OwnedTunnel { param($launcher,$cfg,$tunnel,$status,$started) }
+function Record-OwnedTunnel { param($launcher,$cfg,$tunnel,$status,$started) throw 'Record-OwnedTunnel must not be used for pre-existing runtime adoption' }
 function Open-OwnedTunnelLifetime { param($launcher,$cfg,$tunnel,$status) $null }
-function Connect-TunnelRuntime { param($cfg,$tunnel,[string]$key) $mock.connects++;$mock.ready=$true; 'connected' }
+function Test-OwnedTunnel { param($launcher,$cfg,$tunnel,$status) $mock.tunnelOwned }
+function Connect-TunnelRuntime { param($cfg,$tunnel,[string]$key) $mock.connects++;throw 'Connect-TunnelRuntime must not run in public preview' }
 function Write-LauncherLog { param([string]$Message) $mock.logs.Add($Message) }
 function Start-Sleep { param([int]$Milliseconds,[int]$Seconds) $mock.now=$mock.now.AddMilliseconds($Milliseconds).AddSeconds($Seconds) }
 function Test-Path { param([string]$LiteralPath) if ($LiteralPath -eq 'receipt') { $mock.receiptPresent } elseif ($LiteralPath -eq 'stop.flag') { $mock.stopRequested } else { $true } }
@@ -53,27 +54,42 @@ $script:HouseholdStartedAt=[DateTime]'2026-10-03T00:00:00Z'
 $script:HouseholdWorkingDirectory='already-authorized-fixture-root'
 $cfg=[pscustomobject]@{port=12345;projectPath='already-authorized-fixture-root'}
 $tunnel=[pscustomobject]@{alias='fixture'}
-Test 'Ready alias is reused without another connect' {
-    $mock.ready=$true
+Test 'Ready Companion-owned alias is reused without another connect' {
+    $mock.ready=$true;$mock.tunnelOwned=$true
     Assert-True (Start-TunnelIfNeeded $cfg $tunnel)
     Assert-True ($mock.connects -eq 0)
 }
-Test 'Alive degraded alias is left to official reconnect and never duplicated' {
-    $mock.ready=$false; $mock.status=[pscustomobject]@{process_running=$true}
+Test 'Ready unreceipted alias is never adopted' {
+    $mock.ready=$true;$mock.tunnelOwned=$false
+    $before=$mock.connects
+    Assert-True (!(Start-TunnelIfNeeded $cfg $tunnel))
+    Assert-True ($mock.connects -eq $before)
+    Assert-True (@($mock.logs | Where-Object { $_ -match 'not proven Companion-owned' }).Count -gt 0)
+    $mock.tunnelOwned=$true
+}
+Test 'Alive degraded Companion-owned alias is left to official reconnect and never duplicated' {
+    $mock.ready=$false;$mock.tunnelOwned=$true;$mock.status=[pscustomobject]@{process_running=$true}
     Assert-True (!(Start-TunnelIfNeeded $cfg $tunnel))
     Assert-True ($mock.connects -eq 0)
+}
+Test 'Alive degraded unreceipted alias is never adopted' {
+    $mock.ready=$false;$mock.tunnelOwned=$false;$mock.status=[pscustomobject]@{process_running=$true}
+    $before=$mock.connects
+    Assert-True (!(Start-TunnelIfNeeded $cfg $tunnel))
+    Assert-True ($mock.connects -eq $before)
+    $mock.tunnelOwned=$true
 }
 Test 'Unknown alias state does not permit another client' {
     $mock.status=$null
     Assert-True (!(Start-TunnelIfNeeded $cfg $tunnel))
     Assert-True ($mock.connects -eq 0)
 }
-Test 'Known exited alias restarts once through official connect' {
-    $mock.status=[pscustomobject]@{process_running=$false}
-    Assert-True (Start-TunnelIfNeeded $cfg $tunnel)
-    Assert-True ($mock.connects -eq 1)
-    Assert-True (Start-TunnelIfNeeded $cfg $tunnel)
-    Assert-True ($mock.connects -eq 1)
+Test 'Known exited alias is not auto-connected in public preview' {
+    $mock.ready=$false;$mock.status=[pscustomobject]@{process_running=$false}
+    $before=$mock.connects
+    Assert-True (!(Start-TunnelIfNeeded $cfg $tunnel))
+    Assert-True ($mock.connects -eq $before)
+    Assert-True (@($mock.logs | Where-Object { $_ -match 'Automatic tunnel connect is disabled' }).Count -gt 0)
 }
 Test 'Malformed running state never authorizes another tunnel connect' {
     $mock.ready=$false;$before=$mock.connects
@@ -123,7 +139,7 @@ Test 'Stop authorized when ownership is published survives stale-stop cleanup' {
 }
 function Reset-StopFixture {
     $mock.stopRequested=$true;$mock.status=[pscustomobject]@{process_running=$false};$mock.listening=$false;$mock.receiptPresent=$true
-    $mock.stopError='';$mock.consoleError='';$mock.consoleStops=0;$mock.writerFails=$false;$mock.cleanupStages.Clear();$mock.removes.Clear()
+    $mock.stopError='';$mock.consoleError='';$mock.consoleStops=0;$mock.writerFails=$false;$mock.cleanupStages.Clear();$mock.removes.Clear();$mock.logs.Clear()
     $mock.now=[DateTime]'2026-10-03T00:00:00Z'
 }
 Test 'Normal cooperative stop removes wrapper PID only after console and listener completion' {
@@ -136,6 +152,7 @@ Test 'Failed official tunnel stop records degraded stage and preserves remaining
     Reset-StopFixture;$mock.stopError='HOUSEHOLD_TUNNEL_STOP_FAILED: fake-private-value'
     Assert-Throws { Invoke-HouseholdHostBody } 'HOUSEHOLD_TUNNEL_STOP_FAILED'
     Assert-True ($mock.cleanupStages[0] -ceq 'tunnel-stop' -and $mock.consoleStops -eq 0 -and $mock.removes.Count -eq 0)
+    Assert-True (@($mock.logs | Where-Object { $_ -match 'fake-private-value' }).Count -eq 0)
 }
 Test 'Unknown tunnel status times out with degraded evidence before any console stop' {
     Reset-StopFixture;$mock.status=$null
@@ -147,6 +164,7 @@ Test 'Console rejection and timeout retain wrapper evidence and record only fixe
         Reset-StopFixture;$mock.consoleError=$code+': fake-private-value'
         Assert-Throws { Invoke-HouseholdHostBody } $code
         Assert-True ($mock.cleanupStages[0] -ceq 'console-stop' -and $mock.removes.Count -eq 0)
+        Assert-True (@($mock.logs | Where-Object { $_ -match 'fake-private-value' }).Count -eq 0)
     }
 }
 Test 'Remaining listener fails cleanup before removing wrapper PID' {

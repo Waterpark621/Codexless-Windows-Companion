@@ -24,4 +24,12 @@ Run:
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Test-PublicTree.ps1
 
-A developer may additionally pass a private newline-delimited needle file with -PrivateNeedlesPath. The checker reports only the file/line category, not the private value.
+Also:
+
+- pass a private newline-delimited needle file with `-PrivateNeedlesPath` for current-machine identifiers;
+- scan **every reachable Git commit/blob**, not only the current worktree;
+- inspect commit metadata for accidental identifying information;
+- inspect the exact release archive before publication;
+- confirm tunnel profiles, Browser/native-host caches, logs, keys, receipts, recovery evidence and generated runtime directories are absent.
+
+The checker reports only file/line/category, not the private value. The repository-level scanner is one gate, not a substitute for history/archive review.

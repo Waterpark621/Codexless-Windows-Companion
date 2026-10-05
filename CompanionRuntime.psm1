@@ -10,10 +10,14 @@ function Get-RequiredProperty {
 
 function Resolve-CompanionLocalPath {
     param([string]$Path,[string]$Label,[ValidateSet('Any','File','Directory')][string]$Kind='Any',[switch]$MustExist)
-    if ([string]::IsNullOrWhiteSpace($Path) -or ![IO.Path]::IsPathRooted($Path) -or $Path.StartsWith('\\') -or $Path.Contains('"') -or $Path.Contains([char]13) -or $Path.Contains([char]10)) {
-        throw "COMPANION_SETTINGS_INVALID: $Label must be an absolute local path."
+    if ([string]::IsNullOrWhiteSpace($Path) -or
+        $Path -notmatch '^[A-Za-z]:[\\/]' -or
+        $Path.Contains('"') -or $Path.Contains([char]13) -or $Path.Contains([char]10)) {
+        throw "COMPANION_SETTINGS_INVALID: $Label must be a fully-qualified local drive path."
     }
-    $full=[IO.Path]::GetFullPath($Path).TrimEnd('\')
+    $full=[IO.Path]::GetFullPath($Path)
+    $driveRoot=[IO.Path]::GetPathRoot($full)
+    if($full.Length -gt $driveRoot.Length){$full=$full.TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)}
     if ($MustExist -and !(Test-Path -LiteralPath $full)) { throw "COMPANION_SETTINGS_INVALID: $Label does not exist." }
     if ($MustExist -and $Kind -eq 'File' -and !(Test-Path -LiteralPath $full -PathType Leaf)) { throw "COMPANION_SETTINGS_INVALID: $Label must be a file." }
     if ($MustExist -and $Kind -eq 'Directory' -and !(Test-Path -LiteralPath $full -PathType Container)) { throw "COMPANION_SETTINGS_INVALID: $Label must be a directory." }
@@ -227,10 +231,19 @@ function Test-TunnelReady {
 function Connect-TunnelRuntime {
     param($Config,$Tunnel,[string]$PlainKey)
     if ($null -eq $Config.tunnelExe -or [string]::IsNullOrWhiteSpace($PlainKey)) { throw 'TUNNEL_CONNECT_INVALID' }
+    $hadPrevious=Test-Path Env:CONTROL_PLANE_API_KEY
+    $previousValue=if($hadPrevious){[string]$env:CONTROL_PLANE_API_KEY}else{$null}
     $env:CONTROL_PLANE_API_KEY=$PlainKey
     try {
-        & $Config.tunnelExe runtimes connect --alias $Tunnel.alias --profile $Tunnel.alias --profile-dir $Config.profileDir --tunnel-id $Tunnel.tunnelId --runtime-api-key env:CONTROL_PLANE_API_KEY --mcp-server-url $Config.mcpUrl 2>&1|Out-String
-    } finally { Remove-Item Env:CONTROL_PLANE_API_KEY -ErrorAction SilentlyContinue }
+        & $Config.tunnelExe runtimes connect --alias $Tunnel.alias --profile $Tunnel.alias --profile-dir $Config.profileDir --tunnel-id $Tunnel.tunnelId --runtime-api-key env:CONTROL_PLANE_API_KEY --mcp-server-url $Config.mcpUrl *> $null
+        if($LASTEXITCODE -ne 0){throw 'TUNNEL_CONNECT_FAILED'}
+        $true
+    } finally {
+        if($hadPrevious){$env:CONTROL_PLANE_API_KEY=$previousValue}
+        else{Remove-Item Env:CONTROL_PLANE_API_KEY -ErrorAction SilentlyContinue}
+        $previousValue=$null
+        $PlainKey=$null
+    }
 }
 
 function Write-CompanionLog {

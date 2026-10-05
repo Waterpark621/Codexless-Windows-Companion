@@ -53,5 +53,18 @@ $tunnelPlan=($tunnelRaw|Out-String)|ConvertFrom-Json
 if($tunnelPlan.tunnel.enabled -ne $true -or $tunnelPlan.tunnel.alias -cne 'friend' -or $tunnelPlan.tunnel.tunnelId -cne 'tunnel_fixture'){throw 'wrong tunnel plan'}
 if(Test-Path -LiteralPath $tunnelDestination){throw 'Tunnel PlanOnly mutated destination'}
 
+$blockedDestination=Join-Path $fixture 'blocked-destination'
+$previousErrorAction=$ErrorActionPreference
+$ErrorActionPreference='Continue'
+try {
+    $blockedOutput=& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'Install.ps1') -CodexlessRoot $release -ProjectPath $project -NodeExe $node -NoTunnel -InstallDirectory $blockedDestination 2>&1
+    $blockedExit=$LASTEXITCODE
+} finally {
+    $ErrorActionPreference=$previousErrorAction
+}
+if($blockedExit -eq 0){throw 'mutating preview install unexpectedly succeeded'}
+if(($blockedOutput|Out-String) -notmatch 'INSTALL_DISABLED_PUBLIC_PREVIEW'){throw 'missing preview refusal code'}
+if(Test-Path -LiteralPath $blockedDestination){throw 'refused preview install mutated destination'}
+
 Remove-Item -LiteralPath $fixture -Recurse -Force
-Write-Output 'RESULT: 2/2 PASS; PlanOnly validates tunnel/no-tunnel plans without filesystem/task mutation'
+Write-Output 'RESULT: 3/3 PASS; preview installer plans only and refuses mutation'

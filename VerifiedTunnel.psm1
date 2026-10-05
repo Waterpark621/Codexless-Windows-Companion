@@ -103,10 +103,15 @@ function Open-OwnedTunnelLifetime([string]$LauncherDirectory,$Config,$Tunnel,$St
   [pscustomobject]@{lease=$lease;receipt=$receipt;path=$file}
  }catch{$lease.Dispose();throw}
 }
+function Test-OwnedTunnel([string]$LauncherDirectory,$Config,$Tunnel,$Status){
+ $binding=Open-OwnedTunnelLifetime $LauncherDirectory $Config $Tunnel $Status
+ if($null -eq $binding){return $false}
+ try{$true}finally{$binding.lease.Dispose()}
+}
 function Complete-OwnedTunnelStop($Binding){
  if(!$Binding.lease.WaitForExit(30000)){throw 'TUNNEL_STOP_LIFETIME_REMAINS'}
  $saved=Get-Content -LiteralPath $Binding.path -Raw | ConvertFrom-Json
  if($saved.pid -ne $Binding.receipt.pid -or $saved.createdAt -cne $Binding.receipt.createdAt){throw 'TUNNEL_STOP_RECEIPT_CHANGED'}
  Remove-Item -LiteralPath $Binding.path -ErrorAction Stop
 }
-Export-ModuleMember -Function Record-OwnedTunnel,Open-OwnedTunnelLifetime,Complete-OwnedTunnelStop,Get-VerifiedTunnelIdentity,Assert-TunnelOwnerReceipt,Get-TunnelOwnerPath
+Export-ModuleMember -Function Record-OwnedTunnel,Open-OwnedTunnelLifetime,Test-OwnedTunnel,Complete-OwnedTunnelStop,Get-VerifiedTunnelIdentity,Assert-TunnelOwnerReceipt,Get-TunnelOwnerPath

@@ -12,6 +12,9 @@ config.local.json
 keys/
 logs/
 tunnel-owners/
+tunnel-profile/
+browser-snapshots/
+browser-cache/
 host.pid
 codexless.pid
 task-owner.json

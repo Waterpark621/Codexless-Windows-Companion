@@ -1,6 +1,6 @@
 # Codexless Windows Companion
 
-Status: portability implementation. **Not ready for friend/public installation yet.**
+Status: **non-mutating public-preview preparation. Not ready for friend installation.**
 
 Codexless Windows Companion is a small per-user Windows supervisor for a qualified Codexless release. It provides one verified interactive-session owner, duplicate prevention, cooperative shutdown, tunnel lifecycle, verified prior-boot recovery, rollback boundaries, and health checks.
 
@@ -60,12 +60,12 @@ The intended supported flow is:
 9. retain one rollback generation;
 10. survive Desktop close/reopen and Windows reboot in the supported logged-in-user model.
 
-A fresh-install-only `Install.ps1` and read-only `Doctor.ps1` now exist, together with simple Start/Stop/Restart/Status entrypoints. They are source/fixture validated but have **not** yet passed a clean second-user/machine install. Browser-backend probing, repair/update/uninstall, download provenance, and clean-machine qualification remain release gates. Do not use this repository as a friend installer until those gates pass.
+`Install.ps1` is intentionally **plan-only in this public preview**. `-PlanOnly` validates the proposed destination and selected dependencies; invoking it without `-PlanOnly` fails before any file, task, process, or credential mutation. Automatic tunnel connect is also disabled until exact launch provenance is qualified. The DPAPI credential design remains fixture-tested, but the preview installer does not collect or store a runtime key. `Doctor.ps1` and the Start/Stop/Restart/Status entrypoints remain development surfaces, not a supported friend-install flow. Browser ownership probing, qualified release/build binding, repair/update/uninstall, provenance, and clean-machine acceptance remain release gates.
 
 ## Development rule
 
 Keep the ownership/security mechanisms; remove machine assumptions.
 
-Before any push or release, run tools/Test-PublicTree.ps1.
+Before any push or release, run `tools/Test-PublicTree.ps1`, scan the complete Git history with private needles, and inspect the exact release archive contents. Runtime tunnel profiles and Browser/cache directories must never be packaged.
 
 See docs/ARCHITECTURE.md, docs/PORTABILITY-CHECKLIST.md, and docs/PRIVACY.md.

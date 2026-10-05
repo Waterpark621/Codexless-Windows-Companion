@@ -17,6 +17,12 @@ if($PrivateNeedlesPath){
     $needles=@(Get-Content -LiteralPath $PrivateNeedlesPath | Where-Object { ![string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
 }
 $findings=@()
+$blockedDirectoryNames=@('tunnel-profile','browser-snapshots','browser-cache')
+Get-ChildItem -LiteralPath $root -Recurse -Directory -Force | Where-Object {
+    $_.FullName -notmatch '[\/].git[\/]' -and $blockedDirectoryNames -contains $_.Name
+} | ForEach-Object {
+    $findings += [pscustomobject]@{File=$_.FullName.Substring($root.Length+1);Line=0;Category='blocked-runtime-directory'}
+}
 Get-ChildItem -LiteralPath $root -Recurse -File -Force | Where-Object {
     $_.FullName -notmatch '[\\/]\.git[\\/]' -and
     ($extensions -contains $_.Extension.ToLowerInvariant() -or $_.Name -in @('VERSION','.gitignore'))
