@@ -6,6 +6,117 @@ Import-Module (Join-Path $PSScriptRoot 'PriorBootOwnership.psm1')
 Import-Module (Join-Path $PSScriptRoot 'GenerationIdentity.psm1')
 Import-Module (Join-Path $PSScriptRoot 'VerifiedTunnel.psm1') -DisableNameChecking
 
+if(!('Codexless.ScheduledTaskFileAuthority' -as [type])){
+Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.IO;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+namespace Codexless {
+  [StructLayout(LayoutKind.Sequential)]
+  struct ScheduledTaskByHandleFileInformation {
+    public uint FileAttributes;
+    public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime;
+    public System.Runtime.InteropServices.ComTypes.FILETIME LastAccessTime;
+    public System.Runtime.InteropServices.ComTypes.FILETIME LastWriteTime;
+    public uint VolumeSerialNumber;
+    public uint FileSizeHigh;
+    public uint FileSizeLow;
+    public uint NumberOfLinks;
+    public uint FileIndexHigh;
+    public uint FileIndexLow;
+  }
+  public sealed class ScheduledTaskFileAuthority : IDisposable {
+    SafeFileHandle handle;
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    static extern SafeFileHandle CreateFileW(string path, uint access, uint share, IntPtr security,
+      uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError=true)]
+    static extern bool GetFileInformationByHandle(SafeFileHandle handle, out ScheduledTaskByHandleFileInformation info);
+    public ScheduledTaskFileAuthority(string path, bool allowDelete) {
+      uint share = 1u | (allowDelete ? 4u : 0u); // read; optionally delete; never write
+      handle = CreateFileW(path, 0x80000000u, share, IntPtr.Zero, 3u, 0x00200000u, IntPtr.Zero);
+      if(handle.IsInvalid) {
+        int error=Marshal.GetLastWin32Error(); handle.Dispose();
+        throw new IOException("TASK_AUTHORITY_UNAVAILABLE", new Win32Exception(error));
+      }
+      ScheduledTaskByHandleFileInformation info;
+      if(!GetFileInformationByHandle(handle,out info)) {
+        int error=Marshal.GetLastWin32Error(); handle.Dispose();
+        throw new Win32Exception(error);
+      }
+      if((info.FileAttributes & 0x400u)!=0 || (info.FileAttributes & 0x10u)!=0) {
+        handle.Dispose(); throw new IOException("TASK_AUTHORITY_INVALID");
+      }
+    }
+    public void Dispose() { if(handle!=null){handle.Dispose();handle=null;} }
+  }
+}
+'@
+}
+
+function Open-HouseholdTaskAuthority {
+    param([Parameter(Mandatory=$true)]$Definition,[switch]$AllowDelete)
+    if ($null -eq $Definition -or [string]$Definition.Name -cnotmatch '^Codexless-[A-Za-z0-9_.-]{1,220}$') {
+        throw 'TASK_AUTHORITY_INVALID: Refusing an unsafe Scheduled Task name.'
+    }
+    $tasksDirectory = if ([Environment]::Is64BitOperatingSystem -and ![Environment]::Is64BitProcess) {
+        Join-Path $env:SystemRoot 'Sysnative\Tasks'
+    } else {
+        Join-Path $env:SystemRoot 'System32\Tasks'
+    }
+    $path=Join-Path $tasksDirectory ([string]$Definition.Name)
+    [Codexless.ScheduledTaskFileAuthority]::new($path,[bool]$AllowDelete)
+}
+
+function Register-HouseholdTaskCreateOnly {
+    param([Parameter(Mandatory=$true)]$Definition)
+    # Register-ScheduledTask without -Force is a create-only mutation. A raced
+    # same-name task makes this call fail rather than overwriting foreign state.
+    $null=Register-ScheduledTask -TaskName $Definition.Name -TaskPath '\' -Xml $Definition.Xml -ErrorAction Stop
+    $authority=$null
+    try {
+        # Do not report registration success until the just-created task is pinned
+        # against delete/write replacement and its full safety identity re-proves.
+        # If an attacker wins the tiny create/open gap, this proof sees the foreign
+        # object and fails closed rather than adopting it.
+        $authority=Open-HouseholdTaskAuthority -Definition $Definition
+        $xml=Export-ScheduledTask -TaskName $Definition.Name -TaskPath '\' -ErrorAction Stop
+        Assert-HouseholdTaskIdentity $xml $Definition
+    } finally { if($authority){$authority.Dispose()} }
+}
+
+function Start-HouseholdTaskPinned {
+    param([Parameter(Mandatory=$true)]$Definition)
+    $authority=$null
+    try {
+        # No delete/write sharing: after this open, same-name delete, update, or
+        # replacement cannot cross the final XML proof before Start-ScheduledTask.
+        $authority=Open-HouseholdTaskAuthority -Definition $Definition
+        $xml=Export-ScheduledTask -TaskName $Definition.Name -TaskPath '\' -ErrorAction Stop
+        Assert-HouseholdTaskIdentity $xml $Definition
+        Start-ScheduledTask -TaskName $Definition.Name -TaskPath '\' -ErrorAction Stop
+    } finally { if($authority){$authority.Dispose()} }
+}
+
+function Unregister-HouseholdTaskPinned {
+    param([Parameter(Mandatory=$true)]$Definition)
+    $authority=$null
+    try {
+        # Delete sharing lets Scheduler retire the exact held file. Write sharing
+        # remains denied, so a same-name registration/update cannot replace it
+        # before the unregister completes; recreation stays blocked until dispose.
+        $authority=Open-HouseholdTaskAuthority -Definition $Definition -AllowDelete
+        $xml=Export-ScheduledTask -TaskName $Definition.Name -TaskPath '\' -ErrorAction Stop
+        Assert-HouseholdTaskIdentity $xml $Definition
+        Unregister-ScheduledTask -TaskName $Definition.Name -TaskPath '\' -Confirm:$false -ErrorAction Stop
+        if ($null -ne (Get-ScheduledTask -TaskName $Definition.Name -TaskPath '\' -ErrorAction SilentlyContinue)) {
+            throw 'TASK_REMOVE_UNPROVEN: Scheduled Task still resolves after unregister.'
+        }
+    } finally { if($authority){$authority.Dispose()} }
+}
+
 function Get-ProcessIdentity {
     param([int]$ProcessId)
     $process = Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction Stop
@@ -121,8 +232,8 @@ function New-WindowsTaskAdapter {
             if ($null -eq $task) { return $null }
             [pscustomobject]@{ xml=(Export-ScheduledTask -TaskName $binding.Name -TaskPath '\' -ErrorAction Stop) }
         }.GetNewClosure()
-        RegisterTask = { param($value) $null = Register-ScheduledTask -TaskName $value.Name -TaskPath '\' -Xml $value.Xml -ErrorAction Stop }.GetNewClosure()
-        StartTask = { Start-ScheduledTask -TaskName $binding.Name -TaskPath '\' -ErrorAction Stop }.GetNewClosure()
+        RegisterTask = { param($value) Register-HouseholdTaskCreateOnly -Definition $value }.GetNewClosure()
+        StartTask = { Start-HouseholdTaskPinned -Definition $binding }.GetNewClosure()
         GetStatus = { Get-HouseholdRuntimeState $binding }.GetNewClosure()
         CanRecoverPriorBoot = { try { Invoke-WindowsPriorBootRecovery $binding -CheckOnly; $true } catch { $false } }.GetNewClosure()
         RequestGracefulStop = {
@@ -134,4 +245,4 @@ function New-WindowsTaskAdapter {
     }
 }
 
-Export-ModuleMember -Function New-WindowsTaskAdapter,Get-HouseholdRuntimeState,Get-ProcessIdentity,Get-TaskSchedulerParentIdentity,Invoke-WindowsPriorBootRecovery
+Export-ModuleMember -Function New-WindowsTaskAdapter,Get-HouseholdRuntimeState,Get-ProcessIdentity,Get-TaskSchedulerParentIdentity,Invoke-WindowsPriorBootRecovery,Open-HouseholdTaskAuthority,Register-HouseholdTaskCreateOnly,Start-HouseholdTaskPinned,Unregister-HouseholdTaskPinned

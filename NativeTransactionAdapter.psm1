@@ -459,7 +459,8 @@ function New-NativeTransactionAdapter {
     $removeOwnedState=(Get-Command Remove-NativeOwnedState -CommandType Function).ScriptBlock
 
     $assertHouseholdTaskIdentity=Get-Command Assert-HouseholdTaskIdentity -ErrorAction Stop
-    $registerScheduledTask=Get-Command Register-ScheduledTask -ErrorAction Stop
+    $openHouseholdTaskAuthority=Get-Command Open-HouseholdTaskAuthority -ErrorAction Stop
+    $registerHouseholdTaskCreateOnly=Get-Command Register-HouseholdTaskCreateOnly -ErrorAction Stop
     $unregisterScheduledTask=Get-Command Unregister-ScheduledTask -ErrorAction Stop
     $newWindowsTaskAdapter=Get-Command New-WindowsTaskAdapter -ErrorAction Stop
     $invokeHouseholdLifecycle=Get-Command Invoke-HouseholdLifecycle -ErrorAction Stop
@@ -494,13 +495,19 @@ function New-NativeTransactionAdapter {
 
             & $writeInitial $binding $record
             $definition=& $newDefinitionHelper $binding $record
-            $null=& $registerScheduledTask -TaskName $binding.TaskName -TaskPath '\' -Xml $definition.Xml -ErrorAction Stop
-            $registered=& $getTask $binding
-            if ($null -eq $registered) { throw 'NATIVE_ADAPTER_TASK_REGISTRATION_FAILED' }
-            & $assertHouseholdTaskIdentity $registered.xml $definition
-
-            & $writeJson (Join-Path $binding.Root 'native-adapter-owner.json') (& $newOwnerReceipt $binding $record) -CreateNew
-            $null=& $assertNativeTask $binding $record
+            & $registerHouseholdTaskCreateOnly -Definition $definition
+            $taskAuthority=$null
+            try {
+                # Pin the just-created task before adopting it into native receipt
+                # authority. Delete/update/replacement remain blocked through both
+                # XML proof and receipt publication.
+                $taskAuthority=& $openHouseholdTaskAuthority -Definition $definition
+                $registered=& $getTask $binding
+                if ($null -eq $registered) { throw 'NATIVE_ADAPTER_TASK_REGISTRATION_FAILED' }
+                & $assertHouseholdTaskIdentity $registered.xml $definition
+                & $writeJson (Join-Path $binding.Root 'native-adapter-owner.json') (& $newOwnerReceipt $binding $record) -CreateNew
+                $null=& $assertNativeTask $binding $record
+            } finally { if($taskAuthority){$taskAuthority.Dispose()} }
         }.GetNewClosure()
 
         AssertTask={
@@ -580,14 +587,21 @@ function New-NativeTransactionAdapter {
             if (!(& $testStopped $binding $record)) { throw 'NATIVE_ADAPTER_STOP_UNPROVEN' }
             $null=& $assertNativeTask $binding $record
 
-            $task=& $getTask $binding
-            if ($null -eq $task) { throw 'NATIVE_ADAPTER_TASK_MISSING' }
             $definition=& $newDefinitionHelper $binding $record
-            & $assertHouseholdTaskIdentity $task.xml $definition
-
-            & $unregisterScheduledTask -TaskName $binding.TaskName -TaskPath '\' -Confirm:$false -ErrorAction Stop
-            if ($null -ne (& $getTask $binding)) { throw 'NATIVE_ADAPTER_TASK_REMOVE_UNPROVEN' }
-            & $removeOwnedState $binding $record
+            $taskAuthority=$null
+            try {
+                # Allow only delete sharing while the exact task file is held.
+                # A raced update/re-registration cannot replace the proven task
+                # before Scheduler removes it, and recreation is blocked until
+                # owned state retirement completes.
+                $taskAuthority=& $openHouseholdTaskAuthority -Definition $definition -AllowDelete
+                $task=& $getTask $binding
+                if ($null -eq $task) { throw 'NATIVE_ADAPTER_TASK_MISSING' }
+                & $assertHouseholdTaskIdentity $task.xml $definition
+                & $unregisterScheduledTask -TaskName $binding.TaskName -TaskPath '\' -Confirm:$false -ErrorAction Stop
+                if ($null -ne (& $getTask $binding)) { throw 'NATIVE_ADAPTER_TASK_REMOVE_UNPROVEN' }
+                & $removeOwnedState $binding $record
+            } finally { if($taskAuthority){$taskAuthority.Dispose()} }
         }.GetNewClosure()
 
         Promote={
@@ -601,20 +615,34 @@ function New-NativeTransactionAdapter {
             $null=& $assertNativeTask $binding $current
             if (!(& $testStopped $binding $current)) { throw 'NATIVE_ADAPTER_STOP_UNPROVEN' }
 
-            $existing=& $getTask $binding
             $currentDefinition=& $newDefinitionHelper $binding $current
-            & $assertHouseholdTaskIdentity $existing.xml $currentDefinition
-            & $unregisterScheduledTask -TaskName $binding.TaskName -TaskPath '\' -Confirm:$false -ErrorAction Stop
-            if ($null -ne (& $getTask $binding)) { throw 'NATIVE_ADAPTER_TASK_REMOVE_UNPROVEN' }
+            $currentAuthority=$null
+            try {
+                # Linearize retirement against the exact currently-owned task file.
+                # Same-name update/re-registration is blocked until Scheduler has
+                # removed that object and this handle is released.
+                $currentAuthority=& $openHouseholdTaskAuthority -Definition $currentDefinition -AllowDelete
+                $existing=& $getTask $binding
+                if ($null -eq $existing) { throw 'NATIVE_ADAPTER_TASK_MISSING' }
+                & $assertHouseholdTaskIdentity $existing.xml $currentDefinition
+                & $unregisterScheduledTask -TaskName $binding.TaskName -TaskPath '\' -Confirm:$false -ErrorAction Stop
+                if ($null -ne (& $getTask $binding)) { throw 'NATIVE_ADAPTER_TASK_REMOVE_UNPROVEN' }
+            } finally { if($currentAuthority){$currentAuthority.Dispose()} }
 
+            # Registration is create-only. A foreign task that wins the gap after
+            # exact retirement makes this fail closed instead of being overwritten.
             $newTaskDefinition=& $newDefinitionHelper $binding $record
-            $null=& $registerScheduledTask -TaskName $binding.TaskName -TaskPath '\' -Xml $newTaskDefinition.Xml -ErrorAction Stop
-            $newTask=& $getTask $binding
-            if ($null -eq $newTask) { throw 'NATIVE_ADAPTER_TASK_REGISTRATION_FAILED' }
-            & $assertHouseholdTaskIdentity $newTask.xml $newTaskDefinition
-
-            & $writeJson (Join-Path $binding.Root 'native-adapter-owner.json') (& $newOwnerReceipt $binding $record)
-            $null=& $assertNativeTask $binding $record
+            & $registerHouseholdTaskCreateOnly -Definition $newTaskDefinition
+            $newAuthority=$null
+            try {
+                # Pin the candidate through XML proof and native receipt adoption.
+                $newAuthority=& $openHouseholdTaskAuthority -Definition $newTaskDefinition
+                $newTask=& $getTask $binding
+                if ($null -eq $newTask) { throw 'NATIVE_ADAPTER_TASK_REGISTRATION_FAILED' }
+                & $assertHouseholdTaskIdentity $newTask.xml $newTaskDefinition
+                & $writeJson (Join-Path $binding.Root 'native-adapter-owner.json') (& $newOwnerReceipt $binding $record)
+                $null=& $assertNativeTask $binding $record
+            } finally { if($newAuthority){$newAuthority.Dispose()} }
         }.GetNewClosure()
     }
 }

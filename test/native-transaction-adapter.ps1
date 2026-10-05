@@ -92,6 +92,17 @@ function Test([string]$Name,[scriptblock]$Body) {
         $script:MockTaskXml=$null
         $script:MockTaskState='Ready'
     }
+    function script:Open-HouseholdTaskAuthority {
+        param($Definition,[switch]$AllowDelete)
+        if ($null -eq $script:MockTaskXml) { throw 'mock task missing' }
+        $authority=[pscustomobject]@{Disposed=$false;AllowDelete=[bool]$AllowDelete}
+        $authority|Add-Member -MemberType ScriptMethod -Name Dispose -Value { $this.Disposed=$true }
+        $authority
+    }
+    function script:Register-HouseholdTaskCreateOnly {
+        param($Definition)
+        $null=Register-ScheduledTask -TaskName $Definition.Name -TaskPath '\' -Xml $Definition.Xml -ErrorAction Stop
+    }
     function script:New-WindowsTaskAdapter { param($Definition) @{Definition=$Definition} }
     function script:Invoke-HouseholdLifecycle {
         param([string]$Action,$Definition,[hashtable]$Adapter,[int]$TimeoutSeconds)
