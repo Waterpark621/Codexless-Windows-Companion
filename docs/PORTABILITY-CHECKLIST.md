@@ -42,6 +42,7 @@
 - [x] Qualify exact fresh-generation managed tunnel launch, bounded status and guarded official stop.
 - [ ] Add bounded native tunnel status/connect/stop execution.
 - [x] Add internal staged transaction engines, incomplete fences and ownership-verified adapter contracts.
+- [x] Add a same-machine disposable acceptance harness with unique roots, ports and task identity plus sanitized machine-readable reporting; this is not different-machine acceptance.
 - [ ] Qualify the real package/task/provenance adapter before enabling install/repair/uninstall/update mutation.
 - [ ] Add update + rollback transaction: detect -> stage -> verify -> stop -> promote -> restart -> rollback on failure.
 - [ ] Add download/provenance flow and archive checksum verification for qualified binaries.
