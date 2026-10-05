@@ -4,11 +4,16 @@
     "path": "<SELECT_DURING_INSTALL>"
   },
   "codexless": {
+    "root": "<INSTALL_OR_SELECT_QUALIFIED_CODEXLESS_RELEASE>",
+    "nodeExe": "<AUTO_DISCOVER_OR_EXPLICIT_NODE_EXE>",
     "port": 7690
   },
   "tunnel": {
     "enabled": true,
+    "executable": "<INSTALL_OR_SELECT_TUNNEL_CLIENT>",
+    "profileDir": "<LOCAL_TUNNEL_PROFILE_DIR>",
     "alias": "<CREATE_OR_SELECT_ON_THIS_PC>",
-    "credentialSource": "<LOCAL_USER_PROTECTED>"
+    "tunnelId": "<FROM_LOCAL_TUNNEL_SETUP>",
+    "keyFile": "keys\\runtime-key.dpapi"
   }
 }

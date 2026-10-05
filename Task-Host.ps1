@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'WindowsTaskAdapter.psm1') -Force
 if ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -cne $UserSid) { throw 'TASK_OWNER_INVALID' }
-Assert-HouseholdPrincipal $UserSid (Get-Acl -LiteralPath (Join-Path $LauncherDirectory 'config.json') -ErrorAction Stop).GetOwner([Security.Principal.SecurityIdentifier]).Value
+Assert-HouseholdPrincipal $UserSid (Get-Acl -LiteralPath (Join-Path $LauncherDirectory 'settings.json') -ErrorAction Stop).GetOwner([Security.Principal.SecurityIdentifier]).Value
 $definition = New-HouseholdTaskDefinition -UserSid $UserSid -LauncherDirectory $LauncherDirectory -HostScript $PSCommandPath -PowerShellExe (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe')
 # A running task alone does not prove that this process was spawned by Task Scheduler.
 $taskIdentity = Get-ProcessIdentity $PID

@@ -5,12 +5,7 @@ Import-Module (Join-Path $PSScriptRoot '..\UserSessionTask.psm1') -Force
 $module=Get-Module WindowsTaskAdapter
 $fixture=Join-Path $PSScriptRoot ('.fixtures\runtime-state-'+[Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $fixture -Force | Out-Null
-@'
-function Get-LauncherConfig { $script:FixtureConfig }
-function Test-TcpPort { param([int]$Port) $script:FixtureListener }
-function Get-ConfiguredTunnels { param($Config,[switch]$IncludeDisabled) @($Config.tunnels) }
-function Get-TunnelStatus { param($Config,$Tunnel) $script:FixtureTunnel }
-'@ | Set-Content -LiteralPath (Join-Path $fixture 'Core.ps1')
+
 $definition=New-HouseholdTaskDefinition 'S-1-5-21-111-222-333-1001' $fixture (Join-Path $fixture 'Task-Host.ps1') 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 $receipt=[pscustomobject]@{version=1;pid=101;createdAt='2026-10-03T00:00:00.0000000Z';userSid=$definition.UserSid;taskName=$definition.Name;hostScript=$definition.HostScript;launcherDirectory=$definition.LauncherDirectory}
 $receipt | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $fixture 'task-owner.json')
@@ -30,6 +25,10 @@ $consoleReceipt | ConvertTo-Json | Set-Content -LiteralPath $consoleReceiptPath
         102=[pscustomobject]@{pid=102;parentPid=101;userSid=$definition.UserSid;executable=$definition.PowerShellExe;commandLine='fixture wrapper';createdAt='2026-10-03T00:00:01.0000000Z'}
         103=[pscustomobject]@{pid=103;parentPid=102;userSid=$definition.UserSid;executable=$script:FixtureConfig.tunnelExe;commandLine='fixture tunnel';createdAt='2026-10-03T00:00:02.0000000Z'}
     }
+    function script:Get-CompanionConfig { param($CompanionRoot) $script:FixtureConfig }
+    function script:Test-TcpPort { param([int]$Port) $script:FixtureListener }
+    function script:Get-ConfiguredTunnels { param($Config,[switch]$IncludeDisabled) @($Config.tunnels) }
+    function script:Get-TunnelStatus { param($Config,$Tunnel) $script:FixtureTunnel }
     function script:Get-ScheduledTask { param($TaskName,$TaskPath,$ErrorAction) if($TaskPath -cne '\'){throw 'Task scope must be root'}; $script:FixtureTask }
     function script:Get-ProcessIdentity { param([int]$ProcessId) $script:FixtureProcesses[$ProcessId] }
 } $definition $receipt

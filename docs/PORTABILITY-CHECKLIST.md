@@ -7,29 +7,35 @@
 - [x] Generated test/recovery state excluded from Git.
 - [x] Public-tree privacy scanner added.
 - [x] No shipped credential/key material.
-- [x] No copied Browser snapshot/cache.
+- [x] No copied Browser/native-host snapshot/cache.
+- [x] Replaced external Core/Host exact-hash adapter.
+- [x] Removed AST-derived legacy working-directory authority.
+- [x] Removed verified local runtime/binary wrapper binding.
+- [x] Added explicit destination-machine settings schema.
+- [x] Added release-manifest/host-contract validation.
+- [x] Launch Codexless directly through scripts/launch.mjs http.
+- [x] Bind readiness to /readyz, release version, and public surface.
+- [x] Preserve same-boot fail-closed and verified prior-boot recovery.
 
 ## Required before friend install
 
-- [ ] Replace the external Core.ps1 / Host.ps1 exact-hash adapter.
-- [ ] Remove AST-derived legacy working-directory authority.
-- [ ] Replace verified-codex-runtime.json / pinned local binary binding with the Codexless fork lifecycle contract.
-- [ ] Define an explicit versioned Companion settings schema.
-- [ ] Implement destination-machine discovery for install path, current SID, project/context path, endpoint and tunnel executable.
+- [ ] Implement installer discovery/selection for the qualified Codexless fork release, Node, project path, and tunnel client.
 - [ ] Implement local tunnel credential setup without copying credentials from another PC.
 - [ ] Add install / uninstall / repair commands with one rollback generation.
-- [ ] Add a Doctor command that checks owner, listener, tunnel and Browser readiness.
+- [ ] Add a Doctor command that checks owner, listener, release identity, tunnel, and Browser readiness.
 - [ ] Add update transaction: detect -> stage -> verify -> stop -> promote -> restart -> rollback on failure.
-- [ ] Qualify one tagged Codexless fork release and one tunnel-client generation.
-- [ ] Test clean installation under a different Windows user/path.
+- [ ] Qualify one tagged Waterpark621/Codexless release and one tunnel-client generation.
+- [ ] Validate archive provenance/checksum before installing a downloaded release.
+- [ ] Test clean installation under a different Windows user and different paths.
 - [ ] Test duplicate Start, Stop -> Start, Desktop close/reopen, and full Windows reboot recovery.
-- [ ] Run privacy scan and archive-content scan before GitHub release.
+- [ ] Test interrupted install/update and rollback.
+- [ ] Run privacy scan and release-archive content scan before GitHub publication.
 
 ## Deferred from v0
 
-- multiple tunnel aliases;
+- multiple tunnel aliases in default UX;
 - generic Windows service/daemon framework;
 - arbitrary Browser/Computer Use fallbacks;
-- macOS/Linux;
+- macOS/Linux Companion;
 - copying Browser/native-host caches;
 - automatic repair of ambiguous same-boot orphan trees.

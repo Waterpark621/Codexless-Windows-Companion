@@ -1,5 +1,6 @@
 Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1')
+Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1')
 
 function ConvertTo-ReceiptUtc($Value) {
     # v1 CIM receipts have 1-7 fractional digits, depending on the writing runtime.
@@ -70,10 +71,9 @@ function Get-PriorBootEvidence($Definition,$Config,$Tunnels,[DateTime]$Boot) {
             $pids += $id
             $time = ConvertTo-ReceiptUtc $record.createdAt
             if ($name -eq 'codexless-console-owner.json') {
-                # Bind the v1 console to the exact maintained wrapper command without
-                # executing, logging or archiving that command.
-                $shim = (Join-Path (Split-Path $Definition.HostScript) 'Start-VerifiedHousehold.ps1').Replace("'","''")
-                $command = "& '$shim' -LauncherDirectory '$($launcher.Replace("'","''"))' -VerifiedWrapper '$($Config.codexlessHttp.Replace("'","''"))'"
+                # Bind the console receipt to the exact release-derived launch command
+                # without executing, logging or archiving that command.
+                $command = Get-CodexlessPrivateConsoleCommand $Config
                 $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
                 $expected = '"'+$Definition.PowerShellExe+'" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand '+$encoded
                 if ($record.executable -ine $Definition.PowerShellExe -or $record.commandLine -cne $expected) { throw 'RECOVERY_CONSOLE_INVALID' }
@@ -144,13 +144,13 @@ function Assert-PriorBootAbsence($Definition,$Config,$Tunnels,$Evidence) {
     }
     $processes = @(Get-CimInstance Win32_Process -OperationTimeoutSec 10 -ErrorAction Stop)
     if (!$processes.Count) { throw 'RECOVERY_PROCESS_QUERY_EMPTY' }
-    $tunnelName = [IO.Path]::GetFileName($Config.tunnelExe)
+    $tunnelName = if ([string]::IsNullOrWhiteSpace([string]$Config.tunnelExe)) { $null } else { [IO.Path]::GetFileName($Config.tunnelExe) }
     foreach ($process in $processes) {
         $id = [int]$process.ProcessId
         # Any reused or foreign recorded PID blocks, regardless of lifetime/SID.
         if ($Evidence.pids -contains $id -or $statusPids -contains $id) { throw 'RECOVERY_RECORDED_PID_PRESENT' }
         if ($id -eq $PID) { continue }
-        if ($process.Name -ieq $tunnelName) { throw 'RECOVERY_TUNNEL_PROCESS_PRESENT' }
+        if ($null -ne $tunnelName -and $process.Name -ieq $tunnelName) { throw 'RECOVERY_TUNNEL_PROCESS_PRESENT' }
         $command = [string]$process.CommandLine
         if ([string]::IsNullOrWhiteSpace($command)) {
             if ($process.Name -in @('powershell.exe','pwsh.exe','node.exe','codex.exe','cmd.exe')) { throw 'RECOVERY_PROCESS_UNREADABLE' }
@@ -158,10 +158,12 @@ function Assert-PriorBootAbsence($Definition,$Config,$Tunnels,$Evidence) {
             if ($command -match '(?i)-(?:e|en|enc|enco|encod|encode|encoded|encodedc|encodedco|encodedcom|encodedcomm|encodedcomma|encodedcomman|encodedcommand)\s+"?([A-Za-z0-9+/=]+)') {
                 $command += ' '+[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($Matches[1]))
             }
-            foreach ($needle in @($Definition.LauncherDirectory,(Split-Path $Definition.HostScript),$Config.codexlessHttp,$Config.tunnelExe)) {
-                if ($command.IndexOf($needle,[StringComparison]::OrdinalIgnoreCase) -ge 0) { throw 'RECOVERY_RELEVANT_PROCESS_PRESENT' }
+            $needles=@($Definition.LauncherDirectory,(Split-Path $Definition.HostScript),$Config.codexlessRoot,$Config.nodeExe,$Config.launchScript)
+            if (![string]::IsNullOrWhiteSpace([string]$Config.tunnelExe)) { $needles += [string]$Config.tunnelExe }
+            foreach ($needle in $needles) {
+                if (![string]::IsNullOrWhiteSpace([string]$needle) -and $command.IndexOf([string]$needle,[StringComparison]::OrdinalIgnoreCase) -ge 0) { throw 'RECOVERY_RELEVANT_PROCESS_PRESENT' }
             }
-            if ($command -match '(?i)codexless|Task-Host\.ps1|Household-Host\.ps1|Start-VerifiedHousehold\.ps1|launch\.mjs["\s]+http') { throw 'RECOVERY_RELEVANT_PROCESS_PRESENT' }
+            if ($command -match '(?i)codexless|Task-Host\.ps1|Household-Host\.ps1|launch\.mjs["\s]+http') { throw 'RECOVERY_RELEVANT_PROCESS_PRESENT' }
         }
     }
 }
@@ -172,13 +174,12 @@ function Invoke-PriorBootOwnership {
     try {
         $launcher = $Definition.LauncherDirectory
         Assert-HouseholdPrincipal ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value) $Definition.UserSid
-        if ((Get-Acl -LiteralPath (Join-Path $launcher 'config.json')).GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $Definition.UserSid) { throw 'RECOVERY_CONFIG_OWNER_INVALID' }
-        $core = Join-Path $launcher 'Core.ps1'
-        if ((Get-FileHash -LiteralPath $core -Algorithm SHA256).Hash -cne '4BE5AA39D49CB78C93F8146BADDEACDBE8CECB0BED4B1963E2539D15B9E1D88B') { throw 'RECOVERY_CORE_UNKNOWN' }
-        . $core
-        $configText = [IO.File]::ReadAllText((Join-Path $launcher 'config.json'))
-        $cfg = Get-LauncherConfig
-        if ([int]$cfg.port -lt 1 -or [int]$cfg.port -gt 65535 -or ![IO.Path]::IsPathRooted($cfg.tunnelExe) -or ![IO.Path]::IsPathRooted($cfg.codexlessHttp)) { throw 'RECOVERY_CONFIG_INVALID' }
+        $settingsPath=Join-Path $launcher 'settings.json'
+        if ((Get-Acl -LiteralPath $settingsPath).GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $Definition.UserSid) { throw 'RECOVERY_SETTINGS_OWNER_INVALID' }
+        $settingsText = [IO.File]::ReadAllText($settingsPath)
+        $cfg = Get-CompanionConfig $launcher
+        if ([int]$cfg.port -lt 1 -or [int]$cfg.port -gt 65535 -or ![IO.Path]::IsPathRooted($cfg.nodeExe) -or ![IO.Path]::IsPathRooted($cfg.launchScript) -or ![IO.Path]::IsPathRooted($cfg.codexlessRoot)) { throw 'RECOVERY_CONFIG_INVALID' }
+        if (@($cfg.tunnels).Count -and ([string]::IsNullOrWhiteSpace([string]$cfg.tunnelExe) -or ![IO.Path]::IsPathRooted($cfg.tunnelExe))) { throw 'RECOVERY_CONFIG_INVALID' }
         $tunnels = @(Get-ConfiguredTunnels $cfg -IncludeDisabled)
         if ($tunnels.Count -gt 64) { throw 'RECOVERY_TUNNEL_LIMIT' }
         $boot = Get-WindowsBootUtc
@@ -193,7 +194,7 @@ function Invoke-PriorBootOwnership {
         # The second observation may have taken time. Recheck every byte (including
         # the old cleanup marker) before replacing that marker with our own fence.
         $final = Get-PriorBootEvidence $Definition $cfg $tunnels $boot
-        if ($evidence.raw.Count -ne $final.raw.Count -or [IO.File]::ReadAllText((Join-Path $launcher 'config.json')) -cne $configText) { throw 'RECOVERY_EVIDENCE_CHANGED' }
+        if ($evidence.raw.Count -ne $final.raw.Count -or [IO.File]::ReadAllText($settingsPath) -cne $settingsText) { throw 'RECOVERY_EVIDENCE_CHANGED' }
         foreach ($name in $evidence.raw.Keys) { if (!$final.raw.ContainsKey($name) -or $evidence.raw[$name] -cne $final.raw[$name]) { throw 'RECOVERY_EVIDENCE_CHANGED' } }
         if ($CheckOnly) { return }
         # The caller is Task-Host, inside its Scheduler/identity/owner-mutex gates.

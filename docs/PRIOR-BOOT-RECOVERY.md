@@ -1,45 +1,36 @@
-# Verified prior-boot ownership recovery
+# Verified prior-boot recovery
 
-The 2026-10-05 incident was a recovery classification gap. Logon correctly started the scheduled task, but receipts left by an unclean exit in the previous Windows boot were indistinguishable from an ambiguous same-boot owner. Both Start and Task-Host consequently refused startup. This change adds only a prior-boot exception to those existing fences.
+The Companion distinguishes previous-Windows-boot stale ownership from ambiguous same-boot failures.
 
-## Recovery rule
+## Rule
 
-Start still validates the registered task. For a stopped task with cleanup evidence, the Windows adapter can perform a read-only preflight. Success permits scheduling only; it removes nothing. Stop and Restart retain their existing degraded-state refusal. Healthy duplicate Start is unchanged.
+A new task owner may retire retained ownership evidence only when all of the following are proven:
 
-After its existing SID/config-owner, Scheduler ancestry, registered-task identity and owner-mutex gates, Task-Host repeats the entire proof before writing a new owner receipt. The new helper requires:
+1. the current Windows boot time is available and stable;
+2. the retained owner generation predates that boot;
+3. receipt identity matches the current destination user, task, Companion directory, release-derived Codexless launch command, and configured tunnel registration;
+4. the configured Codexless listener is absent;
+5. configured tunnel status proves no live competing runtime;
+6. no recorded/reused PID or relevant foreign owner process is present;
+7. no legacy Codexless Run owner is present;
+8. settings and evidence bytes remain unchanged across repeated observations.
 
-1. The reviewed Core hash, current configuration owner and expected deployment identity.
-2. A supported Windows boot timestamp and a valid v1 task-owner receipt with a strictly earlier UTC creation time. Every retained component time must fall between the owner's creation and the current boot. Exact boot-boundary equality refuses recovery.
-3. Matching task name, SID, launcher and task script; exact maintained private-console command/executable; matching optional PID files; configured tunnel alias, executable, SID, registration digest and consistent native/CIM creation times. Pending console receipts, missing owner provenance, unknown versions/files, malformed records and inconsistent generations refuse recovery. Disabled aliases are included.
-4. No listening socket on the configured port (including wildcard/IPv6); exact inactive official status for every configured alias; no live recorded PID (including reused/foreign PIDs or PIDs retained in inactive status); no configured tunnel executable; no observable competing household/wrapper command, including encoded PowerShell commands; no legacy Codexless HKCU Run owner. Unreadable relevant process commands and failed/incomplete queries refuse recovery.
-5. Repeated component-absence checks, unchanged boot identity, unchanged receipt bytes and unchanged configuration. Evidence paths and their ancestors cannot be reparse points. Limits are 16 KiB per receipt, 64 configured tunnels and 69 evidence files. CIM operations have a 10-second operation timeout. Each read-only status probe has a 5-second process wait and at most two 1-second pipe waits; output above 64 KiB refuses recovery. A timed-out probe is not killed and may finish independently. OS/provider failures can impose additional latency beyond an operation timeout.
+The proof is repeated immediately before retirement. The task owner must already be inside the existing Scheduler ancestry and singleton-owner gate.
 
-Only then does the owner write a fixed-schema, single-slot `prior-boot-recovery.json` summary, establish a current-boot cleanup fence, remove exact validated receipt paths, and clear that fence last. Each removed receipt is checked again. The task-owner receipt is removed last among receipts. Interrupted/failed retirement retains a fence and requires manual review. Normal startup checks run again before publishing the next unchanged v1 owner receipt. The existing host mutex and startup/stop verification remain intact.
+If any observation is missing, malformed, changed, same-boot, or ambiguous, recovery remains fenced.
 
-The diagnostic slot contains only version, retirement state, UTC times, prior owner PID and receipt count. It is overwritten on the next successful proof. No original receipt, command line, configuration, SID, registration ID, credential or key is archived. Recovery never invokes a process kill, tunnel connect/stop, or task mutation API.
+## Portable binding
 
-## Boot identity and v1 compatibility
+Recovery reads settings.json through CompanionRuntime.psm1. It does not import a machine-specific external launcher script or trust a copied executable hash.
 
-The supported source is `Get-CimInstance Win32_OperatingSystem.LastBootUpTime`, returned as a typed DateTime and normalized using `ToUniversalTime()`. Null, unspecified-kind, future, implausible or changing values refuse recovery. Microsoft documents the property as the OS's last restart time: [Win32_OperatingSystem](https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/win32-operatingsystem).
+The expected private-console receipt is reconstructed from the selected Codexless release's manifest-verified scripts/launch.mjs entrypoint, selected Node executable, and configured loopback port.
 
-Existing v1 receipts retain OS process creation times and deployment/user identity. They support the narrow chronological proof under the existing trusted-local-receipt and reliable-system-clock assumptions; a new format would not solve migration of already deployed receipts. UTC strings with 1-7 fractional digits cover the actual incident records. Local/offset timestamps, missing times, invalid dates and same-boot times refuse recovery. No file modification timestamp or missing PID alone supplies authority. New receipts stay v1, preserving normal identity verification and graceful cleanup.
+## Safety properties
 
-This is a Windows kernel-boot boundary, not a logon boundary. Sleep, hibernate and Fast Startup must not be assumed to establish a new generation. If Windows retains LastBootUpTime, dead same-generation evidence stays fenced. Full Windows Restart is the validation boundary. Microsoft describes Fast Startup as restoring preserved kernel state: [Fast Startup and hibernation](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/distinguishing-fast-startup-from-wake-from-hibernation).
-
-Receipt timestamps are not cryptographic boot identities. Deliberate same-account receipt tampering or historical system-clock discontinuities cannot be reconstructed from v1 evidence. Known clock anomalies require manual recovery: visible date/boot inconsistencies are rejected, but the code cannot prove the absence of an unrecorded historical clock correction. Supporting adversarial same-account writers or arbitrary clock history requires a different evidence design. Repeated observations also do not create an atomic exclusion boundary against uncooperative foreign processes racing startup; supported task owners remain serialized by the existing mutex.
-
-## Tests and manual cases
-
-`test/prior-boot-ownership.ps1` runs actual reconciliation with fixture files and mocked OS observations, including the real Task-Host script with a disposable host stub and mocked mutex/Scheduler APIs. `test/recovery-status.ps1` checks the bounded hidden read-only status invocation and failures without launching a tunnel client. Lifecycle tests cover controller preflight, degraded-running refusal and unchanged logon settings. Existing adapter, ancestry, host, console, owner-cleanup, entrypoint and tunnel-lifetime suites remain required.
-
-Manual recovery remains necessary for same-boot uncertainty, retained kernel boot after Fast Startup/resume, missing owner provenance, pending/malformed/mixed receipts, changed deployment/configuration/aliases, unavailable observations, unreadable relevant processes, any live or reused PID/component, legacy Run ownership, or interrupted retirement. Failed proof preserves receipts. Diagnostic write failure also refuses retirement.
-
-## Bounded live-validation plan: separate approval required
-
-Source validation does not install anything, change the household task, or reboot. Before installation approval, review the final diff, commit and fixture results, confirm current household health, and approve a maintenance window and rollback plan. Task XML needs no change.
-
-1. In an approved isolated Windows test account/VM, use a separate candidate launcher, unique task identity, unused endpoint and disposable aliases. Exercise one same-boot failed owner (evidence must remain), one retained prior-boot generation with a full Restart and logon (reconcile exactly once), and one concurrent listener/alias refusal. Never manufacture production timestamps or kill the healthy production household to create evidence. Bound each observation window to 120 seconds after logon; on failure, retain sanitized status and stop for review without force cleanup. Confirm unchanged trigger/settings.
-2. Only after those results and explicit production deployment approval, cooperatively stop the verified household once and confirm all components exited. Back up and install `Task-Host.ps1`, `UserSessionTask.psm1`, `WindowsTaskAdapter.psm1` and new `PriorBootOwnership.psm1` into `household-owner\v1`. Preserve Core, other runtime files, config, keys, aliases, Browser/snapshots, rollback files and task XML. Verify source/deployed hashes.
-3. Start through the existing task. Verify one Scheduler-owned generation, one listener, all aliases ready, and no fence. Within a 120-second observation window each, perform duplicate Start, graceful Stop and Start/Restart; verify singular ownership and complete receipt removal after successful stop. Stop the trial on any failed proof.
-4. After separate reboot approval, perform one full Restart/logon. Verify task firing, new boot identity, healthy singular ownership and unchanged settings within 120 seconds. If genuinely retained prior-boot evidence exists, verify the single sanitized recovery record and exact retirement. A clean reboot without retained evidence proves normal autostart only; the isolated retained-evidence test proves the recovery path. Fast Startup/resume is separately expected to stay fenced when the kernel boot identity is unchanged.
-5. On failure, use cooperative stop only when ownership is verified, restore the backed-up files after confirming absence, and restart the previous version through its existing task. Uncertain ownership requires manual review. Never force-kill, adopt, or clear evidence as rollback automation. No push/GitHub/upstream action is required.
+- missing PID alone is never recovery authority;
+- no process is force-killed or adopted;
+- recovery never runs tunnel connect/stop commands;
+- current-boot ambiguous evidence is never auto-cleared;
+- retirement uses exact validated receipt paths only;
+- interruption during retirement writes a current-boot fence that requires explicit recovery;
+- diagnostic output is bounded and excludes command lines, credentials, keys, and raw settings.

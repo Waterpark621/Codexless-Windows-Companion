@@ -2,6 +2,7 @@ $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot '..\PriorBootOwnership.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot '..\UserSessionTask.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot '..\CompanionRuntime.psm1') -Force
 $module=Get-Module PriorBootOwnership
 $root=Join-Path $PSScriptRoot ('.fixtures\prior-boot-'+[Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $root -Force | Out-Null
@@ -16,16 +17,20 @@ function New-Fixture {
     $folder=Join-Path $root ([Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path (Join-Path $folder 'tunnel-owners') -Force | Out-Null
     $script:def=New-HouseholdTaskDefinition $sid $folder (Join-Path $folder 'Task-Host.ps1') $powershell
-    @'
-function Get-LauncherConfig { $script:cfg }
-function Get-ConfiguredTunnels { param($Config,[switch]$IncludeDisabled) if(!$IncludeDisabled){throw 'must include disabled'}; $Config.tunnels }
-'@ | Set-Content -LiteralPath (Join-Path $folder 'Core.ps1')
-    '{}' | Set-Content -LiteralPath (Join-Path $folder 'config.json')
+    '{}' | Set-Content -LiteralPath (Join-Path $folder 'settings.json')
+    $script:fixtureCfg=[pscustomobject]@{
+        port=7690
+        codexlessRoot=(Join-Path $folder 'release')
+        nodeExe='C:\fixture\node.exe'
+        launchScript=(Join-Path $folder 'release\scripts\launch.mjs')
+        tunnelExe='C:\fixture\tunnel-client.exe'
+        profileDir='C:\fixture\tunnel-profile'
+        tunnels=@([pscustomobject]@{alias='fixture';tunnelId='fixture-registration';enabled=$false})
+    }
     $script:owner=[pscustomobject]@{version=1;pid=101;createdAt='2026-10-03T00:00:00.123456Z';userSid=$sid;taskName=$def.Name;hostScript=$def.HostScript;launcherDirectory=$folder}
     Save 'task-owner.json' $owner
     '101' | Set-Content -LiteralPath (Join-Path $folder 'host.pid')
-    $wrapper=Join-Path $folder 'wrapper.cmd'
-    $command="& '$folder\Start-VerifiedHousehold.ps1' -LauncherDirectory '$folder' -VerifiedWrapper '$wrapper'"
+    $command=Get-CodexlessPrivateConsoleCommand $fixtureCfg
     $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
     Save 'codexless-console-owner.json' ([pscustomobject]@{version=1;pid=102;createdAt='2026-10-03T00:00:01.12345Z';userSid=$sid;executable=$powershell;commandLine=('"'+$powershell+'" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand '+$encoded)})
     '102' | Set-Content -LiteralPath (Join-Path $folder 'codexless.pid')
@@ -33,13 +38,15 @@ function Get-ConfiguredTunnels { param($Config,[switch]$IncludeDisabled) if(!$In
     try{$digest=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes('fixture-registration')))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
     Save 'tunnel-owners\fixture.json' ([pscustomobject]@{version=1;alias='fixture';pid=103;createdAt='2026-10-03T00:00:02.123456Z';nativeCreatedAt='2026-10-03T00:00:02.1234567Z';userSid=$sid;executable='C:\fixture\tunnel-client.exe';registrationDigest=$digest})
     & $module {
-        param($folder,$wrapper)
-        $script:cfg=[pscustomobject]@{port=7690;codexlessHttp=$wrapper;tunnelExe='C:\fixture\tunnel-client.exe';tunnels=@([pscustomobject]@{alias='fixture';tunnelId='fixture-registration';enabled=$false})}
+        param($folder,$cfg)
+        $script:fixtureFolder=$folder
+        $script:cfg=$cfg
         $script:boot=[DateTime]::Parse('2026-10-05T04:55:16Z').ToUniversalTime()
         $script:listeners=@();$script:runs=@();$script:processes=@([pscustomobject]@{ProcessId=999;Name='explorer.exe';CommandLine='explorer'})
         $script:status=[pscustomobject]@{alias='fixture';tunnel_id='fixture-registration';process_running=$false}
         $script:probeFailure='';$script:statusCalls=0;$script:bootCalls=0;$script:changeBoot=$false;$script:changeEvidence=$false;$script:denyDelete=$false;$script:lateChange=''
-        function script:Get-FileHash { [pscustomobject]@{Hash='4BE5AA39D49CB78C93F8146BADDEACDBE8CECB0BED4B1963E2539D15B9E1D88B'} }
+        function script:Get-CompanionConfig { param($CompanionRoot) $script:cfg }
+        function script:Get-ConfiguredTunnels { param($Config,[switch]$IncludeDisabled) if(!$IncludeDisabled){throw 'must include disabled'}; $Config.tunnels }
         function script:Get-CimInstance {
             param($ClassName,$OperationTimeoutSec,$ErrorAction)
             if($script:probeFailure -eq 'cim'){throw 'fixture private error'}
@@ -52,13 +59,13 @@ function Get-ConfiguredTunnels { param($Config,[switch]$IncludeDisabled) if(!$In
             param($Config,$Tunnel)
             $script:statusCalls++
             if($script:probeFailure -eq 'status'){throw 'fixture private error'}
-            if($script:changeEvidence -and $script:statusCalls -eq 1){'999' | Set-Content -LiteralPath (Join-Path $Config.codexlessHttp '..\host.pid')}
-            if($script:statusCalls -eq 2 -and $script:lateChange -eq 'config'){'{"changed":true}' | Set-Content -LiteralPath (Join-Path (Split-Path $Config.codexlessHttp) 'config.json')}
-            if($script:statusCalls -eq 2 -and $script:lateChange -eq 'marker'){Write-HouseholdCleanupState (Split-Path $Config.codexlessHttp) 'task-host' 101}
+            if($script:changeEvidence -and $script:statusCalls -eq 1){'999' | Set-Content -LiteralPath (Join-Path $script:fixtureFolder 'host.pid')}
+            if($script:statusCalls -eq 2 -and $script:lateChange -eq 'config'){'{"changed":true}' | Set-Content -LiteralPath (Join-Path $script:fixtureFolder 'settings.json')}
+            if($script:statusCalls -eq 2 -and $script:lateChange -eq 'marker'){Write-HouseholdCleanupState $script:fixtureFolder 'task-host' 101}
             $script:status
         }
         function script:Remove-Item { param($LiteralPath,$ErrorAction) if($script:denyDelete){throw 'fixture deletion failed'}; Microsoft.PowerShell.Management\Remove-Item -LiteralPath $LiteralPath -ErrorAction Stop }
-    } $folder $wrapper
+    } $folder $fixtureCfg
 }
 function Snapshot {
     $items=@(Get-ChildItem -LiteralPath $def.LauncherDirectory -Recurse -File | Sort-Object FullName | ForEach-Object {$_.FullName+':'+[IO.File]::ReadAllText($_.FullName)})

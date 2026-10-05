@@ -12,9 +12,11 @@ $results = [Collections.Generic.List[string]]::new()
 function Assert-True([bool]$Value,[string]$Message='assertion failed') { if (!$Value) { throw $Message } }
 function Assert-Throws([scriptblock]$Body,[string]$Code) { try { & $Body | Out-Null } catch { if ($_.Exception.Message.Contains($Code)) { return }; throw }; throw "Expected $Code" }
 function Test([string]$Name,[scriptblock]$Body) { & $Body; $results.Add($Name); Write-Output "PASS $Name" }
-$mock = [pscustomobject]@{ready=$false;listening=$true;status=[pscustomobject]@{process_running=$false};connects=0;logs=[Collections.Generic.List[string]]::new();receiptPresent=$false;starts=0;ownerValid=$true;stopRequested=$false;publishStop=$false;trackingEvents=[Collections.Generic.List[string]]::new();now=[DateTime]'2026-10-03T00:00:00Z';stopError='';consoleError='';consoleStops=0;writerFails=$false;cleanupStages=[Collections.Generic.List[string]]::new();removes=[Collections.Generic.List[string]]::new()}
+$mock = [pscustomobject]@{ready=$false;runtimeReady=$true;listening=$true;status=[pscustomobject]@{process_running=$false};connects=0;logs=[Collections.Generic.List[string]]::new();receiptPresent=$false;starts=0;ownerValid=$true;stopRequested=$false;publishStop=$false;trackingEvents=[Collections.Generic.List[string]]::new();now=[DateTime]'2026-10-03T00:00:00Z';stopError='';consoleError='';consoleStops=0;writerFails=$false;cleanupStages=[Collections.Generic.List[string]]::new();removes=[Collections.Generic.List[string]]::new()}
 function Test-TunnelReady { param($cfg,$tunnel) $mock.ready }
 function Test-TcpPort { param([int]$Port) $mock.listening }
+function Test-CodexlessReady { param($cfg) $mock.runtimeReady }
+function Get-CodexlessPrivateConsoleCommand { param($cfg) 'fixture-direct-launch:'+([string]$cfg.port) }
 function Get-TunnelStatus { param($cfg,$tunnel) $mock.status }
 function Get-PlainRuntimeKey { param($tunnel) 'fixture-key-not-a-credential' }
 function Record-OwnedTunnel { param($launcher,$cfg,$tunnel,$status,$started) }
@@ -43,14 +45,13 @@ function Set-Content { param($LiteralPath,$Encoding) $mock.trackingEvents.Add('p
 function Write-HouseholdCleanupState { param($launcherDirectory,$stage,[int]$ownerPid) if ($mock.writerFails) { throw 'fixture-marker-write-failed' };$mock.cleanupStages.Add($stage) }
 $consoleReceiptPath = 'receipt'
 $consoleHelperPath = 'helper.ps1'
-$verifiedHouseholdPath = 'C:\Fixture owner\Start-VerifiedHousehold.ps1'
 $LauncherDirectory='fixture'
 $script:StopFlagPath='stop.flag'
 $script:CodexlessPidPath='wrapper.pid'
 $script:HostPidPath='host.pid'
 $script:HouseholdStartedAt=[DateTime]'2026-10-03T00:00:00Z'
 $script:HouseholdWorkingDirectory='already-authorized-fixture-root'
-$cfg=[pscustomobject]@{port=12345;codexlessHttp='fixture.ps1'}
+$cfg=[pscustomobject]@{port=12345;projectPath='already-authorized-fixture-root'}
 $tunnel=[pscustomobject]@{alias='fixture'}
 Test 'Ready alias is reused without another connect' {
     $mock.ready=$true
@@ -158,25 +159,17 @@ Test 'Marker-write failure preserves tracking and original cleanup failure' {
     Assert-Throws { Invoke-HouseholdHostBody } 'PRIVATE_CONSOLE_STOP_FAILED'
     Assert-True ($mock.removes.Count -eq 0 -and $mock.cleanupStages.Count -eq 0)
 }
-Test 'Launcher retains console stdio so readiness stderr cannot cancel the native CMD parent' {
-    $mock.stopRequested=$false;$mock.receiptPresent=$false;$mock.listening=$false;$mock.ownerValid=$true
+Test 'Portable release command is encoded without a legacy wrapper or stderr redirection' {
+    $mock.stopRequested=$false;$mock.receiptPresent=$false;$mock.listening=$false;$mock.ownerValid=$true;$mock.runtimeReady=$true
     $before=$mock.starts
-    $launchCfg=[pscustomobject]@{port=$cfg.port;codexlessHttp="C:\Fixture launcher\Owner's wrapper.ps1"}
+    $launchCfg=[pscustomobject]@{port=$cfg.port;projectPath='portable-fixture-project'}
     Assert-True (Start-CodexlessIfNeeded $launchCfg)
     Assert-True ($mock.starts -eq $before+1)
     Assert-True ($script:CapturedConsoleArguments -match '-EncodedCommand ([A-Za-z0-9+/=]+)$')
     $command=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($Matches[1]))
-    $commandTokens=$null;$commandErrors=$null
-    $commandAst=[Management.Automation.Language.Parser]::ParseInput($command,[ref]$commandTokens,[ref]$commandErrors)
-    Assert-True ($commandErrors.Count -eq 0)
-    $invocations=@($commandAst.FindAll({param($a) $a -is [Management.Automation.Language.CommandAst]},$true))
-    $redirections=@($commandAst.FindAll({param($a) $a -is [Management.Automation.Language.RedirectionAst]},$true))
-    Assert-True ($redirections.Count -eq 0 -and $invocations.Count -eq 1)
-    Assert-True ($invocations[0].InvocationOperator -eq [Management.Automation.Language.TokenKind]::Ampersand)
-    Assert-True ($invocations[0].CommandElements.Count -eq 5)
-    Assert-True ($invocations[0].CommandElements[0].Value -like '*\Start-VerifiedHousehold.ps1')
-    Assert-True ($invocations[0].CommandElements[2].Value -ceq $LauncherDirectory -and $invocations[0].CommandElements[4].Value -ceq $launchCfg.codexlessHttp)
-    Assert-True ($script:CapturedWorkingDirectory -ceq $script:HouseholdWorkingDirectory)
+    Assert-True ($command -ceq ('fixture-direct-launch:'+([string]$launchCfg.port)))
+    Assert-True ($command -notmatch 'Core\.ps1|Host\.ps1|verified-codex-runtime|Start-VerifiedHousehold')
+    Assert-True ($script:CapturedWorkingDirectory -ceq $launchCfg.projectPath)
 }
 Test 'Staged Host never contains a force-termination or security-job escape path' {
     $source = [IO.File]::ReadAllText([IO.Path]::GetFullPath($scriptPath))

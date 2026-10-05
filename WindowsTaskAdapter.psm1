@@ -1,6 +1,7 @@
 Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1')
 Import-Module (Join-Path $PSScriptRoot 'PrivateConsole.psm1')
+Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1')
 Import-Module (Join-Path $PSScriptRoot 'PriorBootOwnership.psm1')
 
 function Get-ProcessIdentity {
@@ -42,8 +43,7 @@ function Get-TaskSchedulerParentIdentity {
 function Get-HouseholdRuntimeState {
     param($Definition)
     $launcher = $Definition.LauncherDirectory
-    . (Join-Path $launcher 'Core.ps1')
-    $cfg = Get-LauncherConfig
+    $cfg = Get-CompanionConfig $launcher
     $task = Get-ScheduledTask -TaskName $Definition.Name -TaskPath '\' -ErrorAction SilentlyContinue
     $taskState = if ($null -ne $task) { [string]$task.State } else { 'NotRegistered' }
     $receiptFile = Join-Path $launcher 'task-owner.json'
