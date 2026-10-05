@@ -189,6 +189,15 @@ function Get-CompanionConfig {
         $node=(Get-Command node.exe -ErrorAction Stop)
         $nodeExe=Resolve-CompanionLocalPath $node.Source 'node.exe' File -MustExist
     }
+    $nodePolicy=Get-ArtifactPolicy node
+    $nodeSha256=[string]$nodePolicy.executableSha256
+    if($nodeSha256 -cnotmatch '^[0-9a-f]{64}$'){throw 'COMPANION_NODE_PROVENANCE_INVALID: Qualified Node executable digest is not bound.'}
+    if($codexless.PSObject.Properties['nodeSha256'] -and ![string]::IsNullOrWhiteSpace([string]$codexless.nodeSha256) -and [string]$codexless.nodeSha256 -cne $nodeSha256){
+        throw 'COMPANION_NODE_PROVENANCE_INVALID: Installed Node digest does not match qualified artifact provenance.'
+    }
+    if((Get-FileHash -LiteralPath $nodeExe -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant() -cne $nodeSha256){
+        throw 'COMPANION_NODE_PROVENANCE_INVALID: Node executable bytes do not match qualified artifact provenance.'
+    }
 
     $release=Get-CodexlessReleaseIdentity $codexlessRoot
     $tunnels=@()
@@ -225,6 +234,7 @@ function Get-CompanionConfig {
         projectPath=$projectPath
         codexlessRoot=$codexlessRoot
         nodeExe=$nodeExe
+        nodeSha256=$nodeSha256
         port=$port
         mcpUrl="http://127.0.0.1:$port/mcp"
         readyUrl="http://127.0.0.1:$port/readyz"
@@ -297,10 +307,11 @@ function Get-CodexlessPrivateConsoleCommand {
     param($Config)
     $node=([string]$Config.nodeExe).Replace("'","''")
     $launch=([string]$Config.launchScript).Replace("'","''")
+    $expected=[string]$Config.nodeSha256
     $port=[int]$Config.port
-    if ($port -lt 1 -or $port -gt 65535) { throw 'COMPANION_SETTINGS_INVALID: Invalid launch port.' }
+    if ($port -lt 1 -or $port -gt 65535 -or $expected -cnotmatch '^[0-9a-f]{64}$') { throw 'COMPANION_SETTINGS_INVALID: Invalid launch provenance.' }
     $d=[char]36
-    $d+"hadNodeOptions=Test-Path Env:NODE_OPTIONS; "+$d+"previousNodeOptions=if("+$d+"hadNodeOptions){[string]"+$d+"env:NODE_OPTIONS}else{"+$d+"null}; Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue; "+$d+"env:CODEX_TOOLBOX_PUBLIC_PORT='$port'; try { & '$node' '$launch' http; "+$d+"exitCode="+$d+"LASTEXITCODE } finally { if("+$d+"hadNodeOptions){"+$d+"env:NODE_OPTIONS="+$d+"previousNodeOptions}else{Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue}; "+$d+"previousNodeOptions="+$d+"null }; exit "+$d+"exitCode"
+    $d+"nodeStream="+$d+"null; "+$d+"hadNodeOptions=Test-Path Env:NODE_OPTIONS; "+$d+"previousNodeOptions=if("+$d+"hadNodeOptions){[string]"+$d+"env:NODE_OPTIONS}else{"+$d+"null}; Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue; "+$d+"env:CODEX_TOOLBOX_PUBLIC_PORT='$port'; try { "+$d+"nodeStream=[IO.File]::Open('$node',[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read); "+$d+"sha=[Security.Cryptography.SHA256]::Create(); try { "+$d+"actual=([BitConverter]::ToString("+$d+"sha.ComputeHash("+$d+"nodeStream))).Replace('-','').ToLowerInvariant() } finally { "+$d+"sha.Dispose() }; if("+$d+"actual -cne '$expected'){throw 'NODE_EXECUTABLE_MISMATCH'}; & '$node' '$launch' http; "+$d+"exitCode="+$d+"LASTEXITCODE } finally { if("+$d+"nodeStream){"+$d+"nodeStream.Dispose()}; if("+$d+"hadNodeOptions){"+$d+"env:NODE_OPTIONS="+$d+"previousNodeOptions}else{Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue}; "+$d+"previousNodeOptions="+$d+"null }; exit "+$d+"exitCode"
 }
 
 function Get-TunnelRuntimeContext($Config,$Tunnel) {

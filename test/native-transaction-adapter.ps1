@@ -151,6 +151,7 @@ function Test([string]$Name,[scriptblock]$Body) {
             projectPath=[IO.Path]::GetFullPath([string]$settings.project.path)
             codexlessRoot=[IO.Path]::GetFullPath([string]$settings.codexless.root)
             nodeExe=[IO.Path]::GetFullPath([string]$settings.codexless.nodeExe)
+            nodeSha256=[string]$settings.codexless.nodeSha256
             port=[int]$settings.codexless.port
             tunnelExe=$tunnelExeValue
             profileDir=$profile

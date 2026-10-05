@@ -78,7 +78,7 @@ function Get-ArtifactPolicy {
         if($null -eq $policy){throw 'invalid'}
         $uri=[Uri]$policy.url
         if($policy.role -cne $Role -or $policy.sha256 -cnotmatch '^[0-9a-f]{64}$' -or $uri.Scheme -cne 'https' -or $uri.UserInfo -or $uri.Fragment -or $uri.Query -or !$uri.IsDefaultPort){throw 'invalid'}
-        if($Role -eq 'node' -and ($policy.version -cne '24.12.0' -or $policy.architecture -cne 'win-x64' -or $policy.url -cne 'https://nodejs.org/dist/v24.12.0/node-v24.12.0-win-x64.zip')){throw 'invalid'}
+        if($Role -eq 'node' -and ($policy.version -cne '24.12.0' -or $policy.architecture -cne 'win-x64' -or $policy.url -cne 'https://nodejs.org/dist/v24.12.0/node-v24.12.0-win-x64.zip' -or $policy.executableSha256 -cne '2ffe3acc0458fdde999f50d11809bbe7c9b7ef204dcf17094e325d26ace101d8')){throw 'invalid'}
         if($Role -eq 'tunnel' -and ($policy.version -cne '0.0.14' -or $policy.architecture -cne 'windows-amd64' -or $policy.url -cne 'https://github.com/openai/tunnel-client/releases/download/v0.0.14/tunnel-client-v0.0.14-windows-amd64.zip' -or $policy.executableSha256 -cne 'fcc85a69ec0ad82518e4f8964f60c45e31787957782a0fc9c1b0c44e82d61b9b')){throw 'invalid'}
         Assert-ArtifactPolicyBounds $policy
         $policy

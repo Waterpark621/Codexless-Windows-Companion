@@ -29,6 +29,7 @@ function Get-CompanionGenerationContract($Config) {
             projectPath=[string]$Config.projectPath
             codexlessRoot=[string]$Config.codexlessRoot
             nodeExe=[string]$Config.nodeExe
+            nodeSha256=[string]$Config.nodeSha256
             port=[int]$Config.port
             launchCommand=(Get-CodexlessPrivateConsoleCommand $Config)
             tunnelExe=[string]$Config.tunnelExe

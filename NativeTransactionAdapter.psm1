@@ -3,6 +3,7 @@ Import-Module (Join-Path $PSScriptRoot 'InstallTransaction.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'WindowsTaskAdapter.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'ArtifactProvenance.psm1') -Force
 
 function Get-NativeBytesSha256([byte[]]$Bytes) {
     $sha=[Security.Cryptography.SHA256]::Create()
@@ -172,6 +173,7 @@ function Assert-NativeConfig($Binding) {
         $cfg.projectPath -ine $Binding.ProjectPath -or
         $cfg.codexlessRoot -ine $Binding.CodexlessRoot -or
         $cfg.nodeExe -ine $Binding.NodeExe -or
+        $cfg.nodeSha256 -cne $Binding.NodeSha256 -or
         [int]$cfg.port -ne $Binding.Port) { throw 'NATIVE_ADAPTER_SETTINGS_MISMATCH' }
     if ($Binding.TunnelEnabled) {
         if (@($cfg.tunnels).Count -ne 1 -or
@@ -199,6 +201,7 @@ function New-NativeOwnerReceipt($Binding,$Record) {
         transactionId=[string]$Record.transactionId
         generationId=[string]$Record.generationId
         payloadSha256=[string]$Record.payloadSha256
+        nodeSha256=[string]$Binding.NodeSha256
         settingsSha256=(Get-NativeFileSha256 $settings)
         credentialSha256=if($Binding.TunnelEnabled){Get-NativeFileSha256 $key}else{$null}
         taskNameSha256=(Get-NativeStringSha256 $Binding.TaskName)
@@ -218,6 +221,7 @@ function Assert-NativeOwnedState($Binding,$Record) {
         $receipt.transactionId -cne $Record.transactionId -or
         $receipt.generationId -cne $Record.generationId -or
         $receipt.payloadSha256 -cne $Record.payloadSha256 -or
+        $receipt.nodeSha256 -cne $Binding.NodeSha256 -or
         $receipt.settingsSha256 -cnotmatch '^[0-9a-f]{64}$' -or
         $receipt.taskNameSha256 -cne (Get-NativeStringSha256 $Binding.TaskName) -or
         $receipt.taskBindingSha256 -cne (Get-NativeStringSha256 (([string]$Record.transactionId)+'/'+([string]$Record.generationId)))) {
@@ -266,7 +270,7 @@ function Write-NativeInitialState($Binding,$Record) {
     $settings=[ordered]@{
         schemaVersion=1
         project=[ordered]@{path=$Binding.ProjectPath}
-        codexless=[ordered]@{root=$Binding.CodexlessRoot;nodeExe=$Binding.NodeExe;port=$Binding.Port}
+        codexless=[ordered]@{root=$Binding.CodexlessRoot;nodeExe=$Binding.NodeExe;nodeSha256=$Binding.NodeSha256;port=$Binding.Port}
         tunnel=[ordered]@{enabled=$false}
     }
     if ($Binding.TunnelEnabled) {
@@ -343,6 +347,7 @@ function New-NativeTransactionAdapter {
         [Parameter(Mandatory=$true)][string]$ProjectPath,
         [Parameter(Mandatory=$true)][string]$CodexlessRoot,
         [Parameter(Mandatory=$true)][string]$NodeExe,
+        [string]$ExpectedNodeSha256,
         [ValidateRange(1,65535)][int]$Port=7690,
         [Parameter(Mandatory=$true)][string[]]$TrustedPayloadSha256,
         [string]$DisposableTaskName,
@@ -374,6 +379,16 @@ function New-NativeTransactionAdapter {
     $projectFull=Resolve-NativeAdapterPath $ProjectPath 'project' Directory -MustExist
     $codexlessFull=Resolve-NativeAdapterPath $CodexlessRoot 'Codexless root' Directory -MustExist
     $nodeFull=Resolve-NativeAdapterPath $NodeExe 'Node executable' File -MustExist
+    $nodePolicy=Get-ArtifactPolicy node
+    $nodeExpected=[string]$nodePolicy.executableSha256
+    if (![string]::IsNullOrWhiteSpace($ExpectedNodeSha256)) {
+        if ([string]::IsNullOrWhiteSpace($DisposableTaskName)) { throw 'NATIVE_ADAPTER_NODE_OVERRIDE_TEST_ONLY' }
+        if ($ExpectedNodeSha256 -cnotmatch '^[0-9a-fA-F]{64}$') { throw 'NATIVE_ADAPTER_NODE_DIGEST_INVALID' }
+        $nodeExpected=$ExpectedNodeSha256.ToLowerInvariant()
+    } elseif (![string]::IsNullOrWhiteSpace($DisposableTaskName)) {
+        $nodeExpected=Get-NativeFileSha256 $nodeFull
+    }
+    if ($nodeExpected -cnotmatch '^[0-9a-f]{64}$' -or (Get-NativeFileSha256 $nodeFull) -cne $nodeExpected) { throw 'NATIVE_ADAPTER_NODE_PROVENANCE_INVALID' }
     $powerShell=Resolve-NativeAdapterPath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') 'Windows PowerShell' File -MustExist
     $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     if ($sid -notmatch '^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+$') { throw 'NATIVE_ADAPTER_OWNER_INVALID' }
@@ -409,6 +424,7 @@ function New-NativeTransactionAdapter {
         ProjectPath=$projectFull
         CodexlessRoot=$codexlessFull
         NodeExe=$nodeFull
+        NodeSha256=$nodeExpected
         Port=$Port
         TrustedPayloadSha256=$trusted
         UserSid=$sid
@@ -500,7 +516,7 @@ function New-NativeTransactionAdapter {
             if ((& $resolvePath $generation 'generation' Directory -MustExist) -ine
                 (& $getGeneration $binding $record)) { throw 'NATIVE_ADAPTER_GENERATION_MISMATCH' }
             $task=& $assertNativeTask $binding $record
-            if ($task.state -eq 'Running') { throw 'NATIVE_ADAPTER_UNEXPECTED_RUNNING_TASK' }
+            if ($task.state -eq 'Running') { return }
 
             $definition=& $newDefinitionHelper $binding $record
             $windows=& $newWindowsTaskAdapter $definition

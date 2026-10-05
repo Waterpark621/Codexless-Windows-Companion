@@ -69,7 +69,7 @@ function Write-FixtureManifest {
 Write-FixtureManifest
 
 $node=(Get-Command node.exe -ErrorAction Stop).Source
-$settings=[ordered]@{schemaVersion=1;project=[ordered]@{path=$project};codexless=[ordered]@{root=$codexless;nodeExe=$node;port=17690};tunnel=[ordered]@{enabled=$false}}
+$settings=[ordered]@{schemaVersion=1;project=[ordered]@{path=$project};codexless=[ordered]@{root=$codexless;nodeExe=$node;nodeSha256='2ffe3acc0458fdde999f50d11809bbe7c9b7ef204dcf17094e325d26ace101d8';port=17690};tunnel=[ordered]@{enabled=$false}}
 $settings|ConvertTo-Json -Depth 6|Set-Content -LiteralPath (Join-Path $companion 'settings.json') -Encoding utf8
 
 $passed=0
@@ -226,7 +226,7 @@ fs.writeFileSync(target, JSON.stringify({
   port: process.env.CODEX_TOOLBOX_PUBLIC_PORT ?? null
 }));
 '@,[Text.UTF8Encoding]::new($false))
-  $probeCfg=[pscustomobject]@{nodeExe=$node;launchScript=$probeScript;port=17691}
+  $probeCfg=[pscustomobject]@{nodeExe=$node;nodeSha256='2ffe3acc0458fdde999f50d11809bbe7c9b7ef204dcf17094e325d26ace101d8';launchScript=$probeScript;port=17691}
   $command=Get-CodexlessPrivateConsoleCommand $probeCfg
   $hadNodeOptions=Test-Path Env:NODE_OPTIONS
   $savedNodeOptions=if($hadNodeOptions){[string]$env:NODE_OPTIONS}else{$null}
@@ -242,6 +242,32 @@ fs.writeFileSync(target, JSON.stringify({
     Assert ([string]$result.port -ceq '17691')
   } finally {
     if($hadNodeOptions){$env:NODE_OPTIONS=$savedNodeOptions}else{Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue}
+    if($hadOutput){$env:COMPANION_TEST_OUTPUT=$savedOutput}else{Remove-Item Env:COMPANION_TEST_OUTPUT -ErrorAction SilentlyContinue}
+  }
+}
+
+Test 'Qualified launch rejects same-path Node byte replacement before execution' {
+  $fakeNode=Join-Path $root 'node-replaced.exe'
+  $probeScript=Join-Path $root 'node-replaced-probe.mjs'
+  $probeOutput=Join-Path $root 'node-replaced-result.txt'
+  Copy-Item -LiteralPath $node -Destination $fakeNode -Force
+  [IO.File]::WriteAllText($probeScript,'process.exitCode = 0;',[Text.UTF8Encoding]::new($false))
+  $expected=(Get-FileHash -LiteralPath $fakeNode -Algorithm SHA256).Hash.ToLowerInvariant()
+  $probeCfg=[pscustomobject]@{nodeExe=$fakeNode;nodeSha256=$expected;launchScript=$probeScript;port=17692}
+  $command=Get-CodexlessPrivateConsoleCommand $probeCfg
+  [IO.File]::WriteAllBytes($fakeNode,[Text.Encoding]::ASCII.GetBytes('same-path replacement'))
+  $hadOutput=Test-Path Env:COMPANION_TEST_OUTPUT
+  $savedOutput=if($hadOutput){[string]$env:COMPANION_TEST_OUTPUT}else{$null}
+  $savedPreference=$ErrorActionPreference
+  try {
+    $env:COMPANION_TEST_OUTPUT=$probeOutput
+    $ErrorActionPreference='Continue'
+    & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $command 2>$null
+    $exitCode=$LASTEXITCODE
+    Assert ($exitCode -ne 0)
+    Assert (!(Test-Path -LiteralPath $probeOutput))
+  } finally {
+    $ErrorActionPreference=$savedPreference
     if($hadOutput){$env:COMPANION_TEST_OUTPUT=$savedOutput}else{Remove-Item Env:COMPANION_TEST_OUTPUT -ErrorAction SilentlyContinue}
   }
 }
@@ -331,7 +357,7 @@ setInterval(() => {}, 1000);
 Test 'Tunnel key path cannot escape Companion root' {
   $profile=Join-Path $root 'tunnel-profile';New-Item -ItemType Directory -Force -Path $profile|Out-Null
   $exe=Join-Path $root 'tunnel-client.exe';[IO.File]::WriteAllBytes($exe,[byte[]](1,2,3))
-  $bad=[ordered]@{schemaVersion=1;project=[ordered]@{path=$project};codexless=[ordered]@{root=$codexless;nodeExe=$node;port=17690};tunnel=[ordered]@{enabled=$true;executable=$exe;profileDir=$profile;alias='fixture';tunnelId='fixture-id';keyFile='..\outside.dpapi'}}
+  $bad=[ordered]@{schemaVersion=1;project=[ordered]@{path=$project};codexless=[ordered]@{root=$codexless;nodeExe=$node;nodeSha256='2ffe3acc0458fdde999f50d11809bbe7c9b7ef204dcf17094e325d26ace101d8';port=17690};tunnel=[ordered]@{enabled=$true;executable=$exe;profileDir=$profile;alias='fixture';tunnelId='fixture-id';keyFile='..\outside.dpapi'}}
   $bad|ConvertTo-Json -Depth 6|Set-Content -LiteralPath (Join-Path $companion 'settings.json') -Encoding utf8
   $failed=$false
   try { Get-CompanionConfig $companion|Out-Null } catch { $failed=$_.Exception.Message -like 'COMPANION_SETTINGS_INVALID:*' }
@@ -344,7 +370,7 @@ Test 'Relative tunnel profile and DPAPI key stay inside Companion root' {
   $exe=Join-Path $root 'tunnel-client.exe'
   $secret=ConvertTo-SecureString 'fixture-runtime-key' -AsPlainText -Force
   ConvertFrom-SecureString -SecureString $secret|Set-Content -LiteralPath (Join-Path $keys 'runtime-key.dpapi') -Encoding ascii
-  $good=[ordered]@{schemaVersion=1;project=[ordered]@{path=$project};codexless=[ordered]@{root=$codexless;nodeExe=$node;port=17690};tunnel=[ordered]@{enabled=$true;executable=$exe;profileDir='tunnel-profile';alias='fixture';tunnelId='fixture-id';keyFile='keys/runtime-key.dpapi'}}
+  $good=[ordered]@{schemaVersion=1;project=[ordered]@{path=$project};codexless=[ordered]@{root=$codexless;nodeExe=$node;nodeSha256='2ffe3acc0458fdde999f50d11809bbe7c9b7ef204dcf17094e325d26ace101d8';port=17690};tunnel=[ordered]@{enabled=$true;executable=$exe;profileDir='tunnel-profile';alias='fixture';tunnelId='fixture-id';keyFile='keys/runtime-key.dpapi'}}
   $good|ConvertTo-Json -Depth 6|Set-Content -LiteralPath (Join-Path $companion 'settings.json') -Encoding utf8
   $cfg=Get-CompanionConfig $companion
   Assert ($cfg.profileDir -ceq [IO.Path]::GetFullPath($profile))

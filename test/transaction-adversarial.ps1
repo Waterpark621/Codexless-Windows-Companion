@@ -106,14 +106,32 @@ Test 'Failure after staging verification leaves destination absent' {
     Assert ($null -eq $mock.Task)
 }
 
-Test 'Failure immediately after fence retains promoted generation evidence' {
+Test 'Fenced-stage verified recovery resumes exact staged payload' {
+    & $module {
+        $script:RecoveryOriginalStageWriter=${function:Set-TransactionStage}
+        $script:InterruptBeforePromoting=$true
+        function script:Set-TransactionStage {param($Fence,[string]$Path,[string]$Stage)
+            if($script:InterruptBeforePromoting -and $Stage -ceq 'promoting'){$script:InterruptBeforePromoting=$false;throw 'fixture-fenced-interrupt'}
+            & $script:RecoveryOriginalStageWriter $Fence $Path $Stage
+        }
+    }
+    Refuses {Install-Fixture} 'TRANSACTION_INSTALL_INCOMPLETE'
+    Assert ((Fence).stage -ceq 'fenced')
+    $result=Invoke-OwnedRepair $destination $adapter
+    Assert ($result.state -ceq 'recovered-installed' -and $result.verified -and $mock.Running)
+    Assert (!(Test-Path -LiteralPath (Join-Path $destination 'incomplete-install.json')))
+}
+
+Test 'Promoting-stage verified recovery retains and adopts exact generation evidence' {
     $mock.FailVerifyAt=3
     Refuses {Install-Fixture} 'TRANSACTION_INSTALL_INCOMPLETE'
     $f=Fence
     Assert ($f.stage -ceq 'promoting')
     Assert (Test-Path -LiteralPath (Join-Path (Join-Path $destination 'generations') $f.generationId))
     Assert (!(Test-Path -LiteralPath (Join-Path $destination 'install-owner.json')))
-    Refuses {Invoke-OwnedRepair $destination $adapter} 'TRANSACTION_INCOMPLETE'
+    $result=Invoke-VerifiedIncompleteInstallRecovery $destination $adapter
+    Assert ($result.state -ceq 'recovered-installed' -and $result.verified -and $mock.Running)
+    Assert (!(Test-Path -LiteralPath (Join-Path $destination 'incomplete-install.json')))
 }
 
 Test 'Foreign task appearing before registration is fenced and never overwritten' {
@@ -131,14 +149,19 @@ foreach($failure in @('register-before','register-after','start-before','start-a
         $expected=if($failure -like 'register-*'){'registering'}elseif($failure -like 'start-*'){'starting'}else{'verifying'}
         Assert ($f.stage -ceq $expected)
         Refuses {Get-OwnedInstall $destination $adapter} 'TRANSACTION_INCOMPLETE'
+        $mock.Fail=''
+        $result=Invoke-VerifiedIncompleteInstallRecovery $destination $adapter
+        Assert ($result.state -ceq 'recovered-installed' -and $result.verified -and $mock.Running)
+        Assert (!(Test-Path -LiteralPath (Join-Path $destination 'incomplete-install.json')))
     }
 }
 
-Test 'Finalize failure cannot report installation success' {
+Test 'Finalizing-stage verified recovery completes only after exact evidence revalidation' {
     & $module {
+        $script:FailFenceRemovalOnce=$true
         function script:Remove-Item {
             param([string]$LiteralPath,$ErrorAction)
-            if($LiteralPath -like '*incomplete-install.json'){throw 'fixture-finalize-failure'}
+            if($script:FailFenceRemovalOnce -and $LiteralPath -like '*incomplete-install.json'){$script:FailFenceRemovalOnce=$false;throw 'fixture-finalize-failure'}
             Microsoft.PowerShell.Management\Remove-Item -LiteralPath $LiteralPath -ErrorAction $ErrorAction
         }
     }
@@ -146,6 +169,9 @@ Test 'Finalize failure cannot report installation success' {
     Assert ((Fence).stage -ceq 'finalizing')
     Assert (Test-Path -LiteralPath (Join-Path $destination 'install-owner.json'))
     Refuses {Get-OwnedInstall $destination $adapter} 'TRANSACTION_INCOMPLETE'
+    $result=Invoke-VerifiedIncompleteInstallRecovery $destination $adapter
+    Assert ($result.state -ceq 'recovered-installed' -and $result.verified -and $mock.Running)
+    Assert (!(Test-Path -LiteralPath (Join-Path $destination 'incomplete-install.json')))
 }
 
 Test 'Exact-owned repair succeeds only from a completed install' {

@@ -2,17 +2,14 @@ param([string]$FixtureRoot,[ValidateSet('install','update','mutex')][string]$Ope
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot '..\InstallTransaction.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot '..\MutationLock.psm1') -Force
 if($Operation -ceq 'mutex'){
  $root=[IO.Path]::GetFullPath((Join-Path $FixtureRoot 'destination')).TrimEnd('\')
- $sha=[Security.Cryptography.SHA256]::Create()
- try{$digest=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($root.ToLowerInvariant())))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
- $mutex=[Threading.Mutex]::new($false,('Local\CodexlessInstall-'+$digest));$held=$false
- try{
-  $held=$mutex.WaitOne(0);if(!$held){exit 74}
+ Invoke-CompanionMutationLocked $root {
   [IO.File]::WriteAllText((Join-Path $FixtureRoot 'mutex-ready.flag'),'ready')
   $deadline=[DateTime]::UtcNow.AddSeconds(15)
-  while(!(Test-Path -LiteralPath (Join-Path $FixtureRoot 'mutex-stop.flag'))){if([DateTime]::UtcNow -ge $deadline){exit 75};Start-Sleep -Milliseconds 25}
- }finally{if($held){$mutex.ReleaseMutex()};$mutex.Dispose()}
+  while(!(Test-Path -LiteralPath (Join-Path $FixtureRoot 'mutex-stop.flag'))){if([DateTime]::UtcNow -ge $deadline){throw 'fixture lock timeout'};Start-Sleep -Milliseconds 25}
+ }
  exit 0
 }
 $payload=Join-Path $FixtureRoot 'payload';$candidate=Join-Path $FixtureRoot 'candidate';$destination=Join-Path $FixtureRoot 'destination'

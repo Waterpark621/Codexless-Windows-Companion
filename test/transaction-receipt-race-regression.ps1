@@ -36,6 +36,14 @@ function Replace-ReceiptIdentity {
     $x.transactionId=('f'*32)
     [IO.File]::WriteAllText($p,($x|ConvertTo-Json -Compress))
 }
+function Replace-ReceiptObjectWithSameBytes {
+    $p=Join-Path $script:destination 'install-owner.json'
+    $bytes=[IO.File]::ReadAllBytes($p)
+    $swap=$p+'.swap'
+    [IO.File]::WriteAllBytes($swap,$bytes)
+    Remove-Item -LiteralPath $p -Force
+    Move-Item -LiteralPath $swap -Destination $p
+}
 function Expect-Blocked([string]$Name,[scriptblock]$Body,[scriptblock]$Evidence){
     $script:observed++
     $blocked=$false
@@ -48,6 +56,21 @@ function Expect-Blocked([string]$Name,[scriptblock]$Body,[scriptblock]$Evidence)
     }else{
         Write-Output "PASS $Name"
     }
+}
+
+New-Fixture
+$originalStop=$adapter.Stop
+$adapter.Stop={
+    param($path,$record)
+    & $originalStop $path $record
+    Replace-ReceiptObjectWithSameBytes
+}.GetNewClosure()
+Expect-Blocked 'Repair rejects same-byte install-owner object replacement after stop' {
+    Invoke-OwnedRepair $destination $adapter
+} {
+    ($null -ne $mock.Task) -and
+    (!$mock.Running) -and
+    (Test-Path -LiteralPath (Join-Path $destination 'incomplete-install.json'))
 }
 
 New-Fixture
