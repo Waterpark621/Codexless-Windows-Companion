@@ -167,7 +167,7 @@ There is no qualified in-place `ProjectPath` reconfiguration command and no `CHA
 Use the existing verified uninstall/reinstall contract:
 
 1. Run `STOP.cmd` from the extracted release folder for the current installation.
-2. Resolve the current installed generation as shown above, use the trusted payload digest from that installed release's notes, and run the **Uninstall** block above. Keep its adapter bound to `$cfg.projectPath`, the original workspace. Require `state: uninstalled` and `verified: true`; an incomplete or ambiguous uninstall must be recovered through the existing verified path before proceeding.
+2. Resolve the current installed generation as shown above, use the trusted payload digest from that installed release's notes, and run the **Uninstall** block above. Keep its adapter bound to `$cfg.projectPath`, the original workspace. Require `state: uninstalled` and `verified: true`. If uninstall is incomplete or ambiguous, stop and retain its evidence; do not proceed to reinstall. `Install.ps1 -Recover` resumes an interrupted install, not an interrupted uninstall.
 3. Reinstall from an intact verified release ZIP using `INSTALL.cmd`, choosing the new existing workspace. For a custom destination, use the manual install reference with the same `-InstallDirectory` and the new `-ProjectPath`; retain the original port choice if customized. The verified uninstall tombstone allows this reinstall into the retained destination.
 4. Configure optional tunnel profiles through the normal install/Advanced flow with destination-local runtime keys, then run `DOCTOR.cmd` and require PASS.
 
