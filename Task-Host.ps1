@@ -6,8 +6,10 @@ param(
     [string]$GenerationId
 )
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1')
 Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'WindowsTaskAdapter.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'GenerationIdentity.psm1') -Force
 if ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -cne $UserSid) { throw 'TASK_OWNER_INVALID' }
 Assert-HouseholdPrincipal $UserSid (Get-Acl -LiteralPath (Join-Path $LauncherDirectory 'settings.json') -ErrorAction Stop).GetOwner([Security.Principal.SecurityIdentifier]).Value
@@ -42,14 +44,22 @@ if (!(Test-TaskSchedulerAncestry $taskIdentity $parentIdentity $scheduleService 
     throw 'TASK_OWNER_INVALID: Scheduler parent identity is not established; direct Desktop/tool launch is not accepted.'
 }
 # A second owner gate closes the controller->task launch race. Host retains its own mutex.
+# Production keeps the historical per-user singleton. The strict transaction-bound
+# disposable namespace is isolated so acceptance can coexist with an untouched live
+# household without weakening or renaming the production gate.
+$disposableTransaction = ($transactionBound -and $TaskName -cmatch '^Codexless-NativeAdapter-Test-([0-9a-f]{32})$')
+$disposableId = if($disposableTransaction){$Matches[1]}else{$null}
+$taskOwnerMutexName = if($disposableTransaction){"Local\CodexlessTaskOwner-Test-$disposableId"}else{"Local\CodexlessTaskOwner-$UserSid"}
 $created = $false
-$gate = New-Object Threading.Mutex($true,"Local\CodexlessTaskOwner-$UserSid",[ref]$created)
+$gate = New-Object Threading.Mutex($true,$taskOwnerMutexName,[ref]$created)
 if (!$created) { $gate.Dispose(); exit 0 }
 $receiptFile = Join-Path $definition.LauncherDirectory 'task-owner.json'
 $identity = $null
 $ownerEstablished = $false
 $cleanupCompleted = $false
 try {
+    $admission=Enter-CompanionHostLease $definition Startup
+    try {
     $state = Get-HouseholdRuntimeState $definition
     if ($state.taskState -ne 'Running') { throw 'TASK_OWNER_INVALID: This wrapper must be launched by its registered task.' }
     Assert-HouseholdTaskIdentity (Export-ScheduledTask -TaskName $definition.Name -TaskPath '\' -ErrorAction Stop) $definition
@@ -66,20 +76,28 @@ try {
     $receipt | ConvertTo-Json | Set-Content -LiteralPath $temp -Encoding utf8
     Move-Item -LiteralPath $temp -Destination $receiptFile -Force
     $ownerEstablished = $true
+    }finally{$admission.Dispose()}
     # Run synchronously; Task Scheduler owns the long-lived supervisor, not a starter process.
-    & (Join-Path $PSScriptRoot 'Household-Host.ps1') -LauncherDirectory $definition.LauncherDirectory
+    $hostParameters=@{LauncherDirectory=$definition.LauncherDirectory;TaskDefinition=$definition}
+    if($disposableTransaction){$hostParameters.DisposableInstanceId=$disposableId}
+    & (Join-Path $PSScriptRoot 'Household-Host.ps1') @hostParameters
     # Keep unexpected supervisor exit visible to Task Scheduler.
     if (!(Test-Path -LiteralPath (Join-Path $definition.LauncherDirectory 'stop.flag'))) { throw 'HOUSEHOLD_HOST_EXITED: Supervisor exited without a requested stop.' }
     $cleanupCompleted = $true
 } catch {
     $failure = $_
     if ($ownerEstablished) {
-        try { Write-HouseholdCleanupState $definition.LauncherDirectory 'task-host' $PID }
+        try { $cleanupLease=Enter-CompanionHostLease $definition Shutdown;try{Write-HouseholdCleanupState $definition.LauncherDirectory 'task-host' $PID}finally{$cleanupLease.Dispose()} }
         catch { Write-Error 'HOUSEHOLD_CLEANUP_STATE_WRITE_FAILED: Ownership receipts were retained.' -ErrorAction Continue }
     }
     Write-Error -Message $failure.Exception.Message -ErrorAction Continue
     exit 1
 } finally {
-    try { Complete-HouseholdOwnerTracking $definition.LauncherDirectory $identity $cleanupCompleted }
+    try {
+        if($ownerEstablished -and $cleanupCompleted){
+            $cleanupLease=Enter-CompanionHostLease $definition Shutdown
+            try{Complete-HouseholdOwnerTracking $definition.LauncherDirectory $identity $cleanupCompleted}finally{$cleanupLease.Dispose()}
+        }
+    }
     finally { $gate.ReleaseMutex(); $gate.Dispose() }
 }

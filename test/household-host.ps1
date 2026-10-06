@@ -50,6 +50,13 @@ function Write-HouseholdCleanupState { param($launcherDirectory,$stage,[int]$own
 $consoleReceiptPath = 'receipt'
 $consoleHelperPath = 'helper.ps1'
 $LauncherDirectory='fixture'
+$TaskDefinition=[pscustomobject]@{LauncherDirectory='fixture'}
+function Enter-CompanionHostLease {
+ param($Definition,$Phase)
+ $lease=[pscustomobject]@{}
+ $lease|Add-Member -MemberType ScriptMethod -Name Dispose -Value {}
+ $lease
+}
 $script:StopFlagPath='stop.flag'
 $script:CodexlessPidPath='wrapper.pid'
 $script:HostPidPath='host.pid'

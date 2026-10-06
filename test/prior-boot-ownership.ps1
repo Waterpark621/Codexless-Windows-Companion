@@ -25,7 +25,7 @@ function New-Fixture {
         release=[pscustomobject]@{version='fixture';buildId=('b'*64);sourceRevision=('c'*40);manifestSha256=('d'*64);hostContractVersion='codexless-public-preview-v1'}
         port=7690
         codexlessRoot=(Join-Path $folder 'release')
-        nodeExe='C:\fixture\node.exe'
+        nodeExe='C:\fixture\node.exe';nodeSha256=('a'*64)
         launchScript=(Join-Path $folder 'release\scripts\launch.mjs')
         tunnelExe='C:\fixture\tunnel-client.exe'
         profileDir='C:\fixture\tunnel-profile'
@@ -146,6 +146,12 @@ New-Item -ItemType File -Path (Join-Path $LauncherDirectory 'stop.flag') -Force 
 '@ | Set-Content -LiteralPath (Join-Path $def.LauncherDirectory 'Household-Host.ps1')
     $script:hostMock=[pscustomobject]@{recoveries=0;gateHeld=$false}
     function Import-Module {}
+    function Enter-CompanionHostLease {
+        param($Definition,$Phase)
+        $lease=[pscustomobject]@{}
+        $lease|Add-Member ScriptMethod Dispose {}
+        $lease
+    }
     function Get-CompanionConfig {param($CompanionRoot) $fixtureCfg}
     function Get-ProcessIdentity {param($ProcessId) [pscustomobject]@{pid=$ProcessId;parentPid=999;createdAt='2026-10-05T05:00:00.0000000Z';userSid=$sid}}
     function Get-TaskSchedulerParentIdentity {param($ProcessId) [pscustomobject]@{pid=$ProcessId;executable=(Join-Path $env:SystemRoot 'System32\taskhostw.exe');createdAt='2026-10-05T04:55:20.0000000Z'}}

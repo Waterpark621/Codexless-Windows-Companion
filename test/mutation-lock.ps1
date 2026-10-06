@@ -26,12 +26,12 @@ Invoke-CompanionMutationLocked $Root {
 '@
 $holderText | Set-Content -LiteralPath $holder -Encoding utf8
 $abandonText=@'
-param([string]$Module,[string]$Root,[string]$Ready)
+param([string]$Module,[string]$Root,[string]$Ready,[string]$Release)
 $ErrorActionPreference='Stop'
 Import-Module $Module -Force
 Invoke-CompanionMutationLocked $Root {
  Set-Content -LiteralPath $Ready -Value held -Encoding ascii
- while($true){Start-Sleep -Seconds 1}
+ while(!(Test-Path -LiteralPath $Release)){Start-Sleep -Milliseconds 50}; [Environment]::Exit(73)
 }
 '@
 $abandonText | Set-Content -LiteralPath $abandon -Encoding utf8
@@ -47,7 +47,7 @@ Test 'Global mutation mutex excludes a second process for the same root' {
  } finally {
   Set-Content -LiteralPath $release -Value release -Encoding ascii
   $p.WaitForExit(10000)|Out-Null
-  if(!$p.HasExited){$p.Kill();$p.WaitForExit()}
+  if(!$p.HasExited){throw 'fixture did not cooperatively exit; retained without force termination'}
   $p.Dispose()
  }
 }
@@ -56,17 +56,26 @@ Test 'Mutation mutex is reusable after normal release' {
  Assert ($value -ceq 'entered') 'lock did not admit after release'
 }
 Test 'Abandoned mutation mutex fails closed for verified recovery' {
- Remove-Item -LiteralPath $ready -Force -ErrorAction SilentlyContinue
- $p=Start-Process powershell.exe -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$abandon,'-Module',$module,'-Root',$root,'-Ready',$ready) -PassThru -WindowStyle Hidden
+ Remove-Item -LiteralPath $ready,$release -Force -ErrorAction SilentlyContinue
+ $p=Start-Process powershell.exe -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$abandon,'-Module',$module,'-Root',$root,'-Ready',$ready,'-Release',$release) -PassThru -WindowStyle Hidden
  $deadline=[DateTime]::UtcNow.AddSeconds(10)
  while(!(Test-Path $ready) -and [DateTime]::UtcNow -lt $deadline){Start-Sleep -Milliseconds 50}
  Assert (Test-Path $ready) 'abandon holder did not acquire'
- $p.Kill();$p.WaitForExit();$p.Dispose()
+  $observer=[Threading.Mutex]::new($false,('Global\CodexlessMutation-'+(Get-CompanionMutationRootDigest $root)))
+ Set-Content -LiteralPath $release -Value release -Encoding ascii
+ if(!$p.WaitForExit(10000)){throw 'abandon fixture did not exit itself; retained without force termination'}
+ Assert ($p.ExitCode -eq 73) 'abandon fixture did not self-exit at the intended point'
+ $p.Dispose()
  $failed=$false
  try{Invoke-CompanionMutationLocked $root { throw 'abandoned lock entered' }}catch{$failed=$_.Exception.Message -like 'MUTATION_LOCK_ABANDONED*'}
  Assert $failed 'abandoned lock did not fail closed'
+ $observer.Dispose()
 }
 Write-Output "RESULT: $passed/3 PASS; real two-process Global mutex coverage; no cross-session execution claimed"
 } finally {
- Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+  Set-Content -LiteralPath $release -Value release -Encoding ascii
+ $resolved=[IO.Path]::GetFullPath($fixture)
+ $allowed=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '.fixtures')).TrimEnd('\')+'\'
+ if(!$resolved.StartsWith($allowed,[StringComparison]::OrdinalIgnoreCase)){throw 'fixture cleanup escaped test root'}
+ Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction SilentlyContinue
 }

@@ -1,3 +1,4 @@
+Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1')
 Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot 'PrivateConsole.psm1')
 Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1')
@@ -126,7 +127,7 @@ function Assert-TunnelOwnerReceipt($Receipt,$Identity,$Tunnel,$Config) {
  }catch{throw 'TUNNEL_LIFETIME_MISMATCH'}
  Assert-TunnelManagedCommand $Identity $Config $Tunnel $context
 }
-function Record-OwnedTunnel([string]$LauncherDirectory,$Config,$Tunnel,$Status,$LaunchEvidence){
+function Record-OwnedTunnelCore([string]$LauncherDirectory,$Config,$Tunnel,$Status,$LaunchEvidence){
  $context=Get-TunnelGenerationProof $Config $Tunnel
  $hash=Assert-TunnelExecutable $Config
  $identity=Get-VerifiedTunnelIdentity $Config $Tunnel $Status
@@ -169,7 +170,7 @@ function Test-TunnelGenerationUnlaunched($Config,$Tunnel) {
  $context=Get-TunnelGenerationProof $Config $Tunnel
  !(Test-Path -LiteralPath $context.stateRoot) -and !(Test-Path -LiteralPath (Get-TunnelOwnerPath $Config.companionRoot $Tunnel))
 }
-function Start-OwnedTunnel([string]$LauncherDirectory,$Config,$Tunnel,[string]$PlainKey) {
+function Start-OwnedTunnelCore([string]$LauncherDirectory,$Config,$Tunnel,[string]$PlainKey) {
  $context=Get-TunnelGenerationProof $Config $Tunnel
  Assert-TunnelExecutable $Config|Out-Null
  if(!(Test-TunnelGenerationUnlaunched $Config $Tunnel)){throw 'TUNNEL_CONNECT_GENERATION_FENCED'}
@@ -189,7 +190,7 @@ function Start-OwnedTunnel([string]$LauncherDirectory,$Config,$Tunnel,[string]$P
   Test-OwnedTunnel $LauncherDirectory $Config $Tunnel $status
  }finally{$PlainKey=$null;$launch=$null;$status=$null}
 }
-function Stop-OwnedTunnel([string]$LauncherDirectory,$Config,$Tunnel) {
+function Stop-OwnedTunnelCore([string]$LauncherDirectory,$Config,$Tunnel) {
  $binding=Open-OwnedTunnelLifetime $LauncherDirectory $Config $Tunnel (Get-TunnelStatus $Config $Tunnel)
  if($null -eq $binding){return}
  $context=Get-TunnelGenerationProof $Config $Tunnel
@@ -221,9 +222,21 @@ function Assert-TunnelReceiptUnchanged($Binding) {
  $current=(Read-TunnelReceipt $Binding.path).bytes
  if([Convert]::ToBase64String($current) -cne [Convert]::ToBase64String($Binding.bytes)){throw 'TUNNEL_STOP_RECEIPT_CHANGED'}
 }
-function Complete-OwnedTunnelStop($Binding){
+function Complete-OwnedTunnelStopCore($Binding){
  if(!$Binding.lease.WaitForExit(30000)){throw 'TUNNEL_STOP_LIFETIME_REMAINS'}
  Assert-TunnelReceiptUnchanged $Binding
  if(![Codexless.TunnelLifetime]::RetireReceipt($Binding.path,$Binding.bytes)){throw 'TUNNEL_STOP_RECEIPT_CHANGED'}
+}
+function Start-OwnedTunnel([string]$LauncherDirectory,$Config,$Tunnel,[string]$PlainKey) {
+ Invoke-CompanionResourceMutation $LauncherDirectory {Start-OwnedTunnelCore $LauncherDirectory $Config $Tunnel $PlainKey}
+}
+function Stop-OwnedTunnel([string]$LauncherDirectory,$Config,$Tunnel) {
+ Invoke-CompanionResourceMutation $LauncherDirectory {Stop-OwnedTunnelCore $LauncherDirectory $Config $Tunnel}
+}
+function Record-OwnedTunnel([string]$LauncherDirectory,$Config,$Tunnel,$Status,$LaunchEvidence) {
+ Invoke-CompanionResourceMutation $LauncherDirectory {Record-OwnedTunnelCore $LauncherDirectory $Config $Tunnel $Status $LaunchEvidence}
+}
+function Complete-OwnedTunnelStop($Binding) {
+ Invoke-CompanionResourceMutation (Split-Path (Split-Path $Binding.path -Parent) -Parent) {Complete-OwnedTunnelStopCore $Binding}
 }
 Export-ModuleMember -Function Record-OwnedTunnel,Open-OwnedTunnelLifetime,Test-OwnedTunnel,Complete-OwnedTunnelStop,Get-VerifiedTunnelIdentity,Assert-TunnelOwnerReceipt,Get-TunnelOwnerPath,Start-OwnedTunnel,Stop-OwnedTunnel,Test-TunnelGenerationUnlaunched

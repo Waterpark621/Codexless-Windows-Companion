@@ -1,5 +1,13 @@
-param([Parameter(Mandatory=$true)][string]$LauncherDirectory)
+param(
+    [Parameter(Mandatory=$true)][string]$LauncherDirectory,
+    [string]$DisposableInstanceId,
+    [Parameter(Mandatory=$true)]$TaskDefinition
+)
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1')
+if(![string]::IsNullOrWhiteSpace($DisposableInstanceId) -and $DisposableInstanceId -cnotmatch '^[0-9a-f]{32}$'){
+    throw 'HOUSEHOLD_TEST_INSTANCE_INVALID'
+}
 Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1') -Force -ErrorAction Stop
 Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1') -Force -ErrorAction Stop
 Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1') -Force
@@ -43,12 +51,16 @@ function Initialize-HouseholdHostTracking {
     $PID | Set-Content -LiteralPath $script:HostPidPath -Encoding ascii
 }
 
+$initialLease=Enter-CompanionHostLease $TaskDefinition Startup
+try {
 if (!(Test-Path -LiteralPath (Join-Path $LauncherDirectory 'logs'))) { New-Item -ItemType Directory -Path (Join-Path $LauncherDirectory 'logs') -Force | Out-Null }
 $created = $false
-$mutex = New-Object Threading.Mutex($true,'Local\CodexlessLocalLauncherHost',[ref]$created)
+$hostMutexName=if([string]::IsNullOrWhiteSpace($DisposableInstanceId)){'Local\CodexlessLocalLauncherHost'}else{"Local\CodexlessLocalLauncherHost-Test-$DisposableInstanceId"}
+$mutex = New-Object Threading.Mutex($true,$hostMutexName,[ref]$created)
 if (!$created) { $mutex.Dispose(); exit 0 }
 Initialize-HouseholdHostTracking
 $script:HouseholdStartedAt=[DateTime]::UtcNow
+}finally{$initialLease.Dispose()}
 
 function Test-HouseholdStopRequested { Test-Path -LiteralPath $script:StopFlagPath }
 function Get-HouseholdTime { [DateTime]::UtcNow }
@@ -167,6 +179,12 @@ function Invoke-HouseholdHostBody {
     try {
         Write-LauncherLog "Task-owned Host started. PID=$PID"
         while (!(Test-HouseholdStopRequested)) {
+            $cycleLease=$null
+            try{$cycleLease=Enter-CompanionHostLease $TaskDefinition Startup}catch{
+                if($_.Exception.Message -like 'MUTATION_CONCURRENT_OPERATION*' -or $_.Exception.Message -eq 'MUTATION_TRANSACTION_FENCED'){Start-Sleep -Milliseconds 250;continue}
+                throw
+            }
+            try {
             $cfg=Get-LauncherConfig
             $ownedReady=Start-CodexlessIfNeeded $cfg
             if ($ownedReady) {
@@ -175,13 +193,22 @@ function Invoke-HouseholdHostBody {
                     $null=Start-TunnelIfNeeded $cfg $tunnel
                 }
             }
+            }finally{$cycleLease.Dispose()}
             for ($wait=0; $wait -lt 15; $wait++) { if (Test-HouseholdStopRequested) { break }; Start-Sleep -Seconds 2 }
         }
-        Stop-ManagedPieces (Get-LauncherConfig)
+        $stopLease=$null
+        $deadline=[DateTime]::UtcNow.AddSeconds(120)
+        while(!$stopLease){
+            try{$stopLease=Enter-CompanionHostLease $TaskDefinition Shutdown}catch{
+                if($_.Exception.Message -notlike 'MUTATION_CONCURRENT_OPERATION*' -or [DateTime]::UtcNow -ge $deadline){throw}
+                Start-Sleep -Milliseconds 100
+            }
+        }
+        try{Stop-ManagedPieces (Get-LauncherConfig)}finally{$stopLease.Dispose()}
         Write-LauncherLog 'Task-owned Host stopped normally after graceful household close.'
     } catch {
         $failure=$_
-        try { Write-HouseholdCleanupState $LauncherDirectory $script:HouseholdStage $PID }
+        try { $failureLease=Enter-CompanionHostLease $TaskDefinition Shutdown;try{Write-HouseholdCleanupState $LauncherDirectory $script:HouseholdStage $PID}finally{$failureLease.Dispose()} }
         catch { Write-LauncherLog 'HOUSEHOLD_CLEANUP_STATE_WRITE_FAILED: Ownership receipts were retained.' }
         Write-LauncherLog "Task-owned Host entered degraded state during stage '$script:HouseholdStage'."
         throw $failure

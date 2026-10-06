@@ -1,4 +1,5 @@
 Set-StrictMode -Version Latest
+Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1')
 
 function Assert-TaskPath {
     param([string]$Path)
@@ -213,7 +214,7 @@ function Complete-HouseholdOwnerTracking {
     Remove-Item -LiteralPath $receiptFile -ErrorAction Stop
 }
 
-function Invoke-HouseholdLifecycle {
+function Invoke-HouseholdLifecycleCore {
     # 30s tunnel wait + 60s console wait + bounded helper/observation margin.
     param([ValidateSet('Register','Start','Stop','Restart','Status')] [string]$Action, $Definition, [hashtable]$Adapter, [ValidateRange(1,600)][int]$TimeoutSeconds=120)
     $task = & $Adapter.GetTask
@@ -262,4 +263,21 @@ function Invoke-HouseholdLifecycle {
     [pscustomobject]@{ state='stopped'; changed=$true }
 }
 
+function Invoke-HouseholdLifecycle {
+    param([ValidateSet('Register','Start','Stop','Restart','Status')][string]$Action,$Definition,[hashtable]$Adapter,[ValidateRange(1,600)][int]$TimeoutSeconds=120)
+    if($Action -ceq 'Status'){return Invoke-HouseholdLifecycleCore @PSBoundParameters}
+    Invoke-CompanionMutationLocked $Definition.LauncherDirectory {
+        if(!$Adapter.ContainsKey('HostDelegation')){return Invoke-HouseholdLifecycleCore $Action $Definition $Adapter $TimeoutSeconds}
+        if($Action -ceq 'Register'){return Invoke-HouseholdLifecycleCore $Action $Definition $Adapter $TimeoutSeconds}
+        if($Action -cin @('Stop','Restart')){
+            $stopped=Invoke-CompanionHostDelegation $Definition Shutdown {Invoke-HouseholdLifecycleCore Stop $Definition $Adapter $TimeoutSeconds}
+            if($Action -ceq 'Stop'){return $stopped}
+        }
+        Invoke-CompanionHostDelegation $Definition Startup {
+            $result=Invoke-HouseholdLifecycleCore Start $Definition $Adapter $TimeoutSeconds
+            & $Adapter.WaitReady $TimeoutSeconds
+            $result
+        }
+    }
+}
 Export-ModuleMember -Function New-HouseholdTaskDefinition,Assert-HouseholdPrincipal,Assert-HouseholdTaskIdentity,Test-HouseholdOwnerIdentity,Test-TaskSchedulerAncestry,Write-HouseholdCleanupState,Test-HouseholdOwnershipEvidence,Get-HouseholdCleanupState,Complete-HouseholdOwnerTracking,Invoke-HouseholdLifecycle

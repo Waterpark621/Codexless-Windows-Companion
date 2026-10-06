@@ -1,6 +1,8 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot '..\UserSessionTask.psm1') -Force
+# Virtual path/identity unit fixtures; real exclusion is tested separately.
+& (Get-Module UserSessionTask) { function script:Invoke-CompanionMutationLocked {param($Root,$Body) & $Body} }
 $definition = New-HouseholdTaskDefinition -UserSid 'S-1-5-21-111-222-333-1001' -LauncherDirectory 'C:\Fixture launcher & user\Household' -HostScript 'C:\Fixture supervisor\Task-Host.ps1' -PowerShellExe 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 $results = [Collections.Generic.List[object]]::new()
 function Assert-True([bool]$Value,[string]$Message='assertion failed') { if (!$Value) { throw $Message } }

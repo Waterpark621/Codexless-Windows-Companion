@@ -294,7 +294,10 @@ const server = http.createServer((req, res) => {
 server.listen(0, "127.0.0.1", () => {
   fs.writeFileSync(infoPath, JSON.stringify({port:server.address().port}));
 });
-setInterval(() => {}, 1000);
+const timer=setInterval(() => {
+  if(fs.existsSync(infoPath+'.stop')) {clearInterval(timer);server.close();}
+},50);
+setTimeout(()=>{clearInterval(timer);server.close();},30000).unref();
 '@,[Text.UTF8Encoding]::new($false))
 
   $payload=[ordered]@{
@@ -347,8 +350,8 @@ setInterval(() => {}, 1000);
     Assert (Test-CodexlessReady $readyCfg 1500)
   } finally {
     if($null -ne $server -and !$server.HasExited){
-      try{$server.Kill()}catch{}
-      try{[void]$server.WaitForExit(2000)}catch{}
+      [IO.File]::WriteAllText($serverInfo+'.stop','stop')
+      if(!$server.WaitForExit(10000)){throw 'readiness fixture did not cooperatively exit; retained without force termination'}
     }
     if($null -ne $server){$server.Dispose()}
   }

@@ -1,4 +1,5 @@
 Set-StrictMode -Version Latest
+Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1')
 Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1')
 Import-Module (Join-Path $PSScriptRoot 'PrivateConsole.psm1')
 Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1')
@@ -70,7 +71,7 @@ function Open-HouseholdTaskAuthority {
     [Codexless.ScheduledTaskFileAuthority]::new($path,[bool]$AllowDelete)
 }
 
-function Register-HouseholdTaskCreateOnly {
+function Register-HouseholdTaskCreateOnlyCore {
     param([Parameter(Mandatory=$true)]$Definition)
     # Register-ScheduledTask without -Force is a create-only mutation. A raced
     # same-name task makes this call fail rather than overwriting foreign state.
@@ -87,7 +88,7 @@ function Register-HouseholdTaskCreateOnly {
     } finally { if($authority){$authority.Dispose()} }
 }
 
-function Start-HouseholdTaskPinned {
+function Start-HouseholdTaskPinnedCore {
     param([Parameter(Mandatory=$true)]$Definition)
     $authority=$null
     try {
@@ -100,7 +101,7 @@ function Start-HouseholdTaskPinned {
     } finally { if($authority){$authority.Dispose()} }
 }
 
-function Unregister-HouseholdTaskPinned {
+function Unregister-HouseholdTaskPinnedCore {
     param([Parameter(Mandatory=$true)]$Definition)
     $authority=$null
     try {
@@ -121,7 +122,14 @@ function Get-ProcessIdentity {
     param([int]$ProcessId)
     $process = Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction Stop
     if ($null -eq $process) { return $null }
-    $owner = Invoke-CimMethod -InputObject $process -MethodName GetOwnerSid -ErrorAction Stop
+    try { $owner = Invoke-CimMethod -InputObject $process -MethodName GetOwnerSid -ErrorAction Stop }
+    catch {
+        # Cooperative exit can occur after the initial CIM snapshot. Treat only
+        # proven disappearance as absent; a replacement or unavailable query fails.
+        $again=Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction Stop
+        if($null -eq $again){return $null}
+        throw 'PROCESS_OWNER_UNAVAILABLE'
+    }
     if ($owner.ReturnValue -ne 0) { throw 'PROCESS_OWNER_UNAVAILABLE' }
     [pscustomobject]@{ pid=[int]$process.ProcessId; parentPid=[int]$process.ParentProcessId; userSid=$owner.Sid; executable=$process.ExecutablePath; commandLine=$process.CommandLine; createdAt=$process.CreationDate.ToUniversalTime().ToString('o') }
 }
@@ -226,23 +234,60 @@ function New-WindowsTaskAdapter {
     param($Definition)
     Import-Module ScheduledTasks -ErrorAction Stop
     $binding = $Definition
+    $mutationLock=Get-Command Invoke-CompanionMutationLocked
+    $testReady=Get-Command Test-CodexlessReady
+    $getConfig=Get-Command Get-CompanionConfig
+    # GetNewClosure executes in a private dynamic module. Capture every module-
+    # bound/helper command explicitly so native execution cannot depend on the
+    # caller's import/session state.
+    $getScheduledTask=Get-Command Get-ScheduledTask -ErrorAction Stop
+    $exportScheduledTask=Get-Command Export-ScheduledTask -ErrorAction Stop
+    $registerTask=Get-Command Register-HouseholdTaskCreateOnly -ErrorAction Stop
+    $startTask=Get-Command Start-HouseholdTaskPinned -ErrorAction Stop
+    $getRuntimeState=Get-Command Get-HouseholdRuntimeState -ErrorAction Stop
+    $priorBootRecovery=Get-Command Invoke-WindowsPriorBootRecovery -ErrorAction Stop
     @{
-        GetTask = {
-            $task = Get-ScheduledTask -TaskName $binding.Name -TaskPath '\' -ErrorAction SilentlyContinue
-            if ($null -eq $task) { return $null }
-            [pscustomobject]@{ xml=(Export-ScheduledTask -TaskName $binding.Name -TaskPath '\' -ErrorAction Stop) }
+        HostDelegation = $true
+        WaitReady = {
+            param([int]$TimeoutSeconds)
+            $deadline=[DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+            do {
+                $state=& $getRuntimeState $binding
+                $tunnelsReady=@($state.tunnels|Where-Object {!$_.ready}).Count -eq 0
+                if($state.taskState -eq 'Running' -and $state.ownerVerified -and $state.piecesVerified -and
+                   $state.listenerPresent -and !$state.cleanupRequired -and $tunnelsReady -and (& $testReady (& $getConfig $binding.LauncherDirectory))){return}
+                if($state.cleanupRequired -or [DateTime]::UtcNow -ge $deadline){throw 'HOUSEHOLD_START_NOT_READY'}
+                Start-Sleep -Milliseconds 250
+            }while($true)
         }.GetNewClosure()
-        RegisterTask = { param($value) Register-HouseholdTaskCreateOnly -Definition $value }.GetNewClosure()
-        StartTask = { Start-HouseholdTaskPinned -Definition $binding }.GetNewClosure()
-        GetStatus = { Get-HouseholdRuntimeState $binding }.GetNewClosure()
-        CanRecoverPriorBoot = { try { Invoke-WindowsPriorBootRecovery $binding -CheckOnly; $true } catch { $false } }.GetNewClosure()
+        GetTask = {
+            $task = & $getScheduledTask -TaskName $binding.Name -TaskPath '\' -ErrorAction SilentlyContinue
+            if ($null -eq $task) { return $null }
+            [pscustomobject]@{ xml=(& $exportScheduledTask -TaskName $binding.Name -TaskPath '\' -ErrorAction Stop) }
+        }.GetNewClosure()
+        RegisterTask = { param($value) & $registerTask -Definition $value }.GetNewClosure()
+        StartTask = { & $startTask -Definition $binding }.GetNewClosure()
+        GetStatus = { & $getRuntimeState $binding }.GetNewClosure()
+        CanRecoverPriorBoot = { try { & $priorBootRecovery $binding -CheckOnly; $true } catch { $false } }.GetNewClosure()
         RequestGracefulStop = {
             # Only a verified task-owned Host consumes this signal. No taskkill or Stop-ScheduledTask.
-            New-Item -ItemType File -Path (Join-Path $binding.LauncherDirectory 'stop.flag') -Force -ErrorAction Stop | Out-Null
+            & $mutationLock $binding.LauncherDirectory { New-Item -ItemType File -Path (Join-Path $binding.LauncherDirectory 'stop.flag') -Force -ErrorAction Stop | Out-Null }
         }.GetNewClosure()
         Now = { [DateTime]::UtcNow }
         Sleep = { Start-Sleep -Milliseconds 500 }
     }
 }
 
+function Register-HouseholdTaskCreateOnly {
+ param([Parameter(Mandatory=$true)]$Definition)
+ Invoke-CompanionMutationLocked $Definition.LauncherDirectory { Register-HouseholdTaskCreateOnlyCore $Definition }
+}
+function Start-HouseholdTaskPinned {
+ param([Parameter(Mandatory=$true)]$Definition)
+ Invoke-CompanionMutationLocked $Definition.LauncherDirectory { Start-HouseholdTaskPinnedCore $Definition }
+}
+function Unregister-HouseholdTaskPinned {
+ param([Parameter(Mandatory=$true)]$Definition)
+ Invoke-CompanionMutationLocked $Definition.LauncherDirectory { Unregister-HouseholdTaskPinnedCore $Definition }
+}
 Export-ModuleMember -Function New-WindowsTaskAdapter,Get-HouseholdRuntimeState,Get-ProcessIdentity,Get-TaskSchedulerParentIdentity,Invoke-WindowsPriorBootRecovery,Open-HouseholdTaskAuthority,Register-HouseholdTaskCreateOnly,Start-HouseholdTaskPinned,Unregister-HouseholdTaskPinned

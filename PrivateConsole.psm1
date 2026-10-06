@@ -1,3 +1,4 @@
+Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1')
 Set-StrictMode -Version Latest
 
 if (-not ('Codexless.PrivateConsole' -as [type])) {
@@ -143,7 +144,7 @@ function Start-PrivateConsoleNativeProcess {
     [Codexless.PrivateConsole]::Start($Executable,$Command,$WorkingDirectory)
 }
 
-function Start-PrivateConsoleProcess {
+function Start-PrivateConsoleProcessCore {
     param([string]$Executable,[string]$Arguments,[string]$WorkingDirectory,[string]$ReceiptPath)
     foreach ($path in @($Executable,$WorkingDirectory,$ReceiptPath)) {
         if (![IO.Path]::IsPathRooted($path) -or $path.StartsWith('\\') -or $path.Contains('"') -or $path.Contains("`n") -or $path.Contains("`r")) { throw 'PRIVATE_CONSOLE_PATH_INVALID' }
@@ -164,7 +165,7 @@ function Start-PrivateConsoleProcess {
     [pscustomobject]$receipt
 }
 
-function Request-PrivateConsoleStop {
+function Request-PrivateConsoleStopCore {
     param([string]$ReceiptPath,[string]$HelperScript,[int]$TimeoutSeconds=60)
     if (!(Test-Path -LiteralPath $ReceiptPath)) { throw 'PRIVATE_CONSOLE_RECEIPT_MISSING' }
     foreach ($path in @($ReceiptPath,$HelperScript)) {
@@ -175,4 +176,12 @@ function Request-PrivateConsoleStop {
     if ($helper.ExitCode -ne 0) { throw 'PRIVATE_CONSOLE_STOP_FAILED: Inspect helper error; no force termination or replacement was attempted.' }
 }
 
+function Start-PrivateConsoleProcess {
+    param([string]$Executable,[string]$Arguments,[string]$WorkingDirectory,[string]$ReceiptPath)
+    Invoke-CompanionResourceMutation (Split-Path $ReceiptPath -Parent) {Start-PrivateConsoleProcessCore $Executable $Arguments $WorkingDirectory $ReceiptPath}
+}
+function Request-PrivateConsoleStop {
+    param([string]$ReceiptPath,[string]$HelperScript,[int]$TimeoutSeconds=60)
+    Invoke-CompanionResourceMutation (Split-Path $ReceiptPath -Parent) {Request-PrivateConsoleStopCore $ReceiptPath $HelperScript $TimeoutSeconds}
+}
 Export-ModuleMember -Function Get-ConsoleProcessIdentity,Test-PrivateConsoleReceipt,Test-PrivateConsoleMember,Test-PrivateConsoleListener,Start-PrivateConsoleProcess,Request-PrivateConsoleStop

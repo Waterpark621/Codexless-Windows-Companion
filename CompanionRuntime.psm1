@@ -227,7 +227,15 @@ function Get-CompanionConfig {
         }
     }
 
+    $isolatedRuntimeProfile=$null
+    if($settings.PSObject.Properties['isolatedRuntimeProfile']){
+        if([string]$settings.isolatedRuntimeProfile -cne 'acceptance-profile'){throw 'COMPANION_SETTINGS_INVALID: Unsupported isolation root.'}
+        $isolatedRuntimeProfile=Join-Path $root 'acceptance-profile'
+        if(!(Test-Path -LiteralPath $isolatedRuntimeProfile -PathType Container) -or
+           ((Get-Item -LiteralPath $isolatedRuntimeProfile -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'COMPANION_SETTINGS_INVALID: Invalid isolation root.'}
+    }
     [pscustomobject]@{
+        isolatedRuntimeProfile=$isolatedRuntimeProfile
         schemaVersion=1
         companionRoot=$root
         settingsPath=$settingsPath
@@ -310,8 +318,16 @@ function Get-CodexlessPrivateConsoleCommand {
     $expected=[string]$Config.nodeSha256
     $port=[int]$Config.port
     if ($port -lt 1 -or $port -gt 65535 -or $expected -cnotmatch '^[0-9a-f]{64}$') { throw 'COMPANION_SETTINGS_INVALID: Invalid launch provenance.' }
+    $prefix=''
+    if($Config.PSObject.Properties['isolatedRuntimeProfile'] -and $Config.isolatedRuntimeProfile){
+        $isolated=([string]$Config.isolatedRuntimeProfile).Replace("'","''")
+        $prefix="Get-ChildItem Env: | Where-Object { `$_.Name -match '^(CODEX|CODEXLESS|CODEX_TOOLBOX|OPENAI|AZURE_OPENAI|CONTROL_PLANE|TUNNEL_CLIENT|NODE_OPTIONS)' } | ForEach-Object { Remove-Item -LiteralPath ('Env:'+`$_.Name) -ErrorAction Stop }; "+
+            "`$env:USERPROFILE='$isolated'; `$env:APPDATA='$isolated\AppData\Roaming'; `$env:LOCALAPPDATA='$isolated\AppData\Local'; `$env:CODEX_HOME='$isolated\codex'; "+
+            "`$env:CODEXLESS_AGENT_TASK_STATE_FILE='$isolated\agent-task-cards.json'; `$env:CODEXLESS_BROWSER_SNAPSHOT_STORE='$isolated\browser-snapshots'; `$env:CODEXLESS_CODEX_RUNTIME='existing'; "+
+            "`$env:TUNNEL_CLIENT_STATE_DIR='$isolated\tunnel-state'; `$env:TUNNEL_CLIENT_PROFILE_DIR='$isolated\tunnel-profile'; "
+    }
     $d=[char]36
-    $d+"nodeStream="+$d+"null; "+$d+"hadNodeOptions=Test-Path Env:NODE_OPTIONS; "+$d+"previousNodeOptions=if("+$d+"hadNodeOptions){[string]"+$d+"env:NODE_OPTIONS}else{"+$d+"null}; Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue; "+$d+"env:CODEX_TOOLBOX_PUBLIC_PORT='$port'; try { "+$d+"nodeStream=[IO.File]::Open('$node',[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read); "+$d+"sha=[Security.Cryptography.SHA256]::Create(); try { "+$d+"actual=([BitConverter]::ToString("+$d+"sha.ComputeHash("+$d+"nodeStream))).Replace('-','').ToLowerInvariant() } finally { "+$d+"sha.Dispose() }; if("+$d+"actual -cne '$expected'){throw 'NODE_EXECUTABLE_MISMATCH'}; & '$node' '$launch' http; "+$d+"exitCode="+$d+"LASTEXITCODE } finally { if("+$d+"nodeStream){"+$d+"nodeStream.Dispose()}; if("+$d+"hadNodeOptions){"+$d+"env:NODE_OPTIONS="+$d+"previousNodeOptions}else{Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue}; "+$d+"previousNodeOptions="+$d+"null }; exit "+$d+"exitCode"
+    $prefix+$d+"nodeStream="+$d+"null; "+$d+"hadNodeOptions=Test-Path Env:NODE_OPTIONS; "+$d+"previousNodeOptions=if("+$d+"hadNodeOptions){[string]"+$d+"env:NODE_OPTIONS}else{"+$d+"null}; Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue; "+$d+"env:CODEX_TOOLBOX_PUBLIC_PORT='$port'; try { "+$d+"nodeStream=[IO.File]::Open('$node',[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read); "+$d+"sha=[Security.Cryptography.SHA256]::Create(); try { "+$d+"actual=([BitConverter]::ToString("+$d+"sha.ComputeHash("+$d+"nodeStream))).Replace('-','').ToLowerInvariant() } finally { "+$d+"sha.Dispose() }; if("+$d+"actual -cne '$expected'){throw 'NODE_EXECUTABLE_MISMATCH'}; & '$node' '$launch' http; "+$d+"exitCode="+$d+"LASTEXITCODE } finally { if("+$d+"nodeStream){"+$d+"nodeStream.Dispose()}; if("+$d+"hadNodeOptions){"+$d+"env:NODE_OPTIONS="+$d+"previousNodeOptions}else{Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue}; "+$d+"previousNodeOptions="+$d+"null }; exit "+$d+"exitCode"
 }
 
 function Get-TunnelRuntimeContext($Config,$Tunnel) {

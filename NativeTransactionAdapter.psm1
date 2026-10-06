@@ -103,7 +103,7 @@ function Assert-NativePayloadShape([string]$Path) {
     foreach ($file in @(
         'Task-Host.ps1','Household-Host.ps1','UserSessionTask.psm1','WindowsTaskAdapter.psm1',
         'CompanionRuntime.psm1','GenerationIdentity.psm1','PrivateConsole.psm1','PriorBootOwnership.psm1',
-        'VerifiedTunnel.psm1','ArtifactProvenance.psm1','BoundedNative.psm1','Signal-PrivateConsole.ps1'
+        'VerifiedTunnel.psm1','ArtifactProvenance.psm1','BoundedNative.psm1','Signal-PrivateConsole.ps1','MutationLock.psm1','ARTIFACT-POLICY.json'
     )) {
         if (!(Test-Path -LiteralPath (Join-Path $Path $file) -PathType Leaf)) { throw 'NATIVE_ADAPTER_PAYLOAD_INVALID' }
     }
@@ -300,6 +300,13 @@ function Write-NativeInitialState($Binding,$Record) {
             keyFile='keys\runtime-key.dpapi'
         }
     }
+    if($Binding.DisposableTaskName){
+        $settings.isolatedRuntimeProfile='acceptance-profile'
+        $profileRoot=Join-Path $Binding.Root 'acceptance-profile'
+        foreach($relative in @('','AppData\Roaming','AppData\Local','codex','tunnel-state','tunnel-profile')){
+            $null=New-Item -ItemType Directory -Path (Join-Path $profileRoot $relative) -Force
+        }
+    }
     Write-NativeJson (Join-Path $Binding.Root 'settings.json') $settings -CreateNew
     $null=Assert-NativeConfig $Binding
 }
@@ -467,6 +474,8 @@ function New-NativeTransactionAdapter {
     $getHouseholdRuntimeState=Get-Command Get-HouseholdRuntimeState -ErrorAction Stop
     $testCodexlessReady=Get-Command Test-CodexlessReady -ErrorAction Stop
     $sleepCommand=Get-Command Start-Sleep -ErrorAction Stop
+    Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1')
+    $assertMutation=Get-Command Assert-CompanionMutationHeld -ErrorAction Stop
 
     @{
         Validate={
@@ -487,6 +496,7 @@ function New-NativeTransactionAdapter {
 
         RegisterTask={
             param($generation,$record)
+            & $assertMutation $binding.Root
             $null=& $assertFence $binding $record @('install/registering')
             if ((& $resolvePath $generation 'generation' Directory -MustExist) -ine
                 (& $getGeneration $binding $record)) { throw 'NATIVE_ADAPTER_GENERATION_MISMATCH' }
@@ -517,6 +527,7 @@ function New-NativeTransactionAdapter {
 
         Start={
             param($generation,$record)
+            & $assertMutation $binding.Root
             $null=& $assertFence $binding $record @(
                 'install/starting','repair/starting','update/starting-candidate','update/restarting-prior'
             )
@@ -560,6 +571,7 @@ function New-NativeTransactionAdapter {
 
         Stop={
             param($generation,$record)
+            & $assertMutation $binding.Root
             $null=& $assertFence $binding $record @(
                 'repair/stopping','uninstall/stopping','update/stopping-current','update/stopping-failed-candidate'
             )
@@ -583,6 +595,7 @@ function New-NativeTransactionAdapter {
 
         RemoveTask={
             param($record)
+            & $assertMutation $binding.Root
             $null=& $assertFence $binding $record @('uninstall/unregistering')
             if (!(& $testStopped $binding $record)) { throw 'NATIVE_ADAPTER_STOP_UNPROVEN' }
             $null=& $assertNativeTask $binding $record
@@ -606,6 +619,7 @@ function New-NativeTransactionAdapter {
 
         Promote={
             param($generation,$record)
+            & $assertMutation $binding.Root
             $null=& $assertFence $binding $record @('update/promoting-candidate','update/restoring-prior')
             if ((& $resolvePath $generation 'generation' Directory -MustExist) -ine
                 (& $getGeneration $binding $record)) { throw 'NATIVE_ADAPTER_GENERATION_MISMATCH' }

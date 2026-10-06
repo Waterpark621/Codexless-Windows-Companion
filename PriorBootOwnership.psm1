@@ -1,3 +1,4 @@
+Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1')
 Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1')
 Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1')
@@ -162,7 +163,7 @@ function Assert-PriorBootAbsence($Definition,$Config,$Tunnels,$Evidence) {
     }
 }
 
-function Invoke-PriorBootOwnership {
+function Invoke-PriorBootOwnershipCore {
     param($Definition,[switch]$CheckOnly)
     $ErrorActionPreference = 'Stop'
     try {
@@ -218,4 +219,9 @@ function Invoke-PriorBootOwnership {
     }
 }
 
+function Invoke-PriorBootOwnership {
+    param($Definition,[switch]$CheckOnly)
+    if($CheckOnly){return Invoke-PriorBootOwnershipCore $Definition -CheckOnly}
+    Invoke-CompanionResourceMutation $Definition.LauncherDirectory {Invoke-PriorBootOwnershipCore $Definition}
+}
 Export-ModuleMember -Function Invoke-PriorBootOwnership
