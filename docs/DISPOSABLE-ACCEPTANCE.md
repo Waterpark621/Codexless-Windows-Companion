@@ -1,59 +1,29 @@
-# Same-machine disposable acceptance harness
+# Same-machine disposable acceptance
 
-`test/disposable-acceptance.ps1` is a bounded, same-machine acceptance harness. It is deliberately **not** clean-machine, different-user, or second-machine acceptance.
-
-## Safety envelope
-
-Every run creates a GUID-scoped temporary root under the Windows temporary directory. The project, transaction destination, state, profile, key, tunnel-fixture, and Scheduler-fixture locations live below that root. Ports are selected by binding loopback port 0. The Scheduler probe uses a GUID-scoped `Codexless-Acceptance-...` task with no trigger, a harmless PowerShell host, IgnoreNew duplicate suppression, cooperative stop, and bounded automatic exit. It never names, opens, starts, stops, exports, or unregisters the production `Codexless-Household-<SID>` task.
-
-The tunnel fixture is local-only and uses the literal in-memory value `fixture-only-not-a-real-credential`. It makes no network connection. A supplied v0.0.14 tunnel client is only executed after its SHA-256 matches the already-qualified pin; the full native lifetime check remains delegated to the existing qualified disposable test.
-
-The persisted JSON report contains only fixed test names, verdicts, and reason codes. It does not contain user SIDs, PIDs, host paths, ports, task XML, timestamps, credentials, release roots, process output, or exception text. Temporary runtime material is deleted after the run.
-
-## Current-base coverage
-
-The harness directly exercises the stable `InstallTransaction.psm1` adapter contract and current lifecycle/config APIs for:
-
-- fresh install and duplicate-install refusal;
-- repair;
-- uninstall and reinstall;
-- successful update;
-- failed update with verified rollback;
-- interrupted install/update fencing;
-- foreign task refusal;
-- changed generation refusal;
-- malformed owner/cleanup state refusal;
-- Start, duplicate Start, Status, Stop, Stop -> Start, and Restart contract behavior;
-- a real disposable Scheduler duplicate-start/cooperative-stop probe;
-- a real loopback foreign-listener fixture;
-- missing credential refusal;
-- changed/unqualified release settings refusal;
-- harmless isolated tunnel-client status behavior.
-
-Verified incomplete-install recovery is reported `SKIP_EXTERNAL` because the current transaction engine intentionally retains the fence and has no production recovery authority surface. Real Codexless install/Start/status/Doctor is reported `BLOCKED_UNPUBLISHED_ARTIFACT` until the qualified Codexless artifact is available.
-
-## Worker A integration touch point
-
-The transaction engine authority boundary is the existing adapter hashtable. A real adapter used by the integrated harness must provide scriptblocks named:
-
-`Validate`, `VerifyStage`, `GetTask`, `RegisterTask`, `AssertTask`, `Start`, `VerifyReady`, `Stop`, `VerifyStopped`, and `RemoveTask`; update additionally requires `Promote`.
-
-The harness accepts `-NativeAdapterModule <path>` and `-NativeAdapterFactory <function>`. The module path must stay inside the repository. On the Worker D branch this is intentionally only a discovery/binding check because Worker A is absent; Worker A integration must bind that factory exclusively to the harness-provided disposable install root, project root, GUID task name, dynamic port, isolated state/profile/key roots, and fixture-only credential. It must not derive or fall back to the production task/config/tunnel identity.
-
-The coordinator should not remove the `SKIP_EXTERNAL` result for verified recovery or native adapter execution until those exact disposable bindings are implemented and independently proven. A factory name/path difference is an integration mapping issue, not a reason to weaken the adapter contract.
-
-## Bounded command
-
-From the repository root:
+Run the integrated harness in Windows PowerShell 5.1 with the exact qualified local Codexless candidate and independently acquired pinned tunnel binary:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test\disposable-acceptance.ps1 -ReportPath .\test\.fixtures\disposable-acceptance-report.json
+powershell.exe -NoProfile -File .\test\disposable-acceptance.ps1 -LocalCandidateRoot <qualified-candidate-root> -QualifiedTunnelExe <pinned-tunnel-client.exe> -ReportPath <local-report.json>
 ```
 
-After Worker A is cherry-picked, add its exact module/factory binding:
+The candidate must match the policy's exact release-manifest digest. This local test does not supply or invent a public download artifact. The report always preserves `BLOCKED_UNPUBLISHED_ARTIFACT` for published distribution acceptance.
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test\disposable-acceptance.ps1 -NativeAdapterModule .\<worker-a-module>.psm1 -NativeAdapterFactory <worker-a-factory> -ReportPath .\test\.fixtures\disposable-acceptance-report.json
-```
+## Native execution
 
-If a qualified published Codexless root later exists, pass `-PublishedCodexlessRoot`; if the independently acquired pinned v0.0.14 tunnel binary is available, pass `-QualifiedTunnelExe`. Neither parameter is required for the current-base self-test.
+The main harness invokes `native-disposable-acceptance.ps1` in a separate Windows PowerShell process and merges its sanitized result rows. The native runner uses the real `NativeTransactionAdapter`, transaction engines, Scheduler, Task-Host, Household-Host, private console, exact Node executable, qualified Codexless launch, and loopback readiness checks. It does not invoke a model.
+
+Each run creates GUID-specific installation and project roots under the ignored `test/.fixtures` directory, a strict transaction-bound `Codexless-NativeAdapter-Test-<GUID>` task, dynamic loopback port, and isolated runtime profile. The child clears inherited credential/config environment. Only the disposable project receives read-only project trust inside its disposable profile. Production task, singleton, configuration, profile, project, and tunnel identities are never used as fallback values.
+
+Native cases cover install and duplicate refusal; Start/duplicate Start/status/readiness/Stop/Stop-to-Start/Restart; repair; update; injected candidate-start failure and real rollback; exact-owned uninstall, project preservation and reinstall; verified incomplete-install recovery; interrupted update and rollback fences; foreign tasks/listeners; changed generations; malformed receipts; and missing/invalid fixture credentials. Deterministic callback failures inject interruption at known transaction boundaries; `transaction-chaos.ps1` separately proves actual controller process exits. These are reported as different forms of evidence.
+
+The main harness also retains contract-level malformed cleanup-state and lifecycle checks. It runs the real task-file replacement race, real NTFS reparse/junction race, and real tunnel/native lifetime suites. The pinned official tunnel client performs bounded version and isolated synthetic-status checks without backend credentials. Remote connect acceptance is the only `SKIP_EXTERNAL` row: it requires a separately provisioned disposable backend and nonproduction credentials that are not available to this run.
+
+## Evidence and teardown
+
+Native fixture evidence is retained locally under ignored paths, including exact interrupted fences and any failure diagnostics. Cleanup uses only the exact GUID task definition and cooperative process shutdown. It never forces termination or deletes uncertain process evidence. Contract-only temporary fixtures are removed after bounded cleanup. Reports contain fixed names, statuses and reason codes; raw process output, SIDs, credentials and machine paths do not enter portable reports or Git.
+
+Keep production source unchanged while native acceptance is running. Its installed payload and controller must use the same generation contract; editing generation-bound source mid-run correctly invalidates ownership/readiness proof.
+
+## Remaining boundary
+
+Same-session Scheduler and two-process tests do not prove a separate Windows logon session. Genuine cross-session mutex behavior, different-user DPAPI, clean-machine Scheduler/security policy, Desktop close/reopen, reboot recovery and credentialed disposable backend acceptance remain second-machine work. The qualified public Codexless artifact and its exact publication metadata are still required before distribution acceptance. `friendInstallReady` remains false.

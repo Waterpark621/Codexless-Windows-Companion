@@ -544,7 +544,7 @@ function New-NativeTransactionAdapter {
         VerifyReady={
             param($generation,$record)
             $null=& $assertFence $binding $record @(
-                'install/verifying','repair/verifying','update/verifying-candidate','update/restarting-prior'
+                'install/verifying','install/finalizing','repair/verifying','update/verifying-candidate','update/restarting-prior'
             )
             if ((& $resolvePath $generation 'generation' Directory -MustExist) -ine
                 (& $getGeneration $binding $record)) { throw 'NATIVE_ADAPTER_GENERATION_MISMATCH' }

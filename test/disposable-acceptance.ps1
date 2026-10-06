@@ -1,10 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$ReportPath,
-    [string]$NativeAdapterModule,
-    [string]$NativeAdapterFactory = 'New-DisposableTransactionAdapter',
-    [string]$PublishedCodexlessRoot,
-    [string]$QualifiedTunnelExe
+    [Parameter(Mandatory=$true)][string]$LocalCandidateRoot,
+    [Parameter(Mandatory=$true)][string]$QualifiedTunnelExe
 )
 
 $ErrorActionPreference='Stop'
@@ -81,18 +79,7 @@ function New-LifecycleFixture {
     $state=[pscustomobject]@{taskState='Ready';hostPresent=$false;ownerVerified=$false;piecesVerified=$false;listenerPresent=$false;tunnelPresent=$false;cleanupRequired=$false}
     $clock=[DateTime]::UtcNow
     $calls=[Collections.Generic.List[string]]::new()
-    $definition=[pscustomobject]@{
-        Name=$taskName;UserSid='S-1-5-21-111-222-333-1001';LauncherDirectory='C:\Disposable\Acceptance';HostScript='C:\Disposable\Acceptance\fixture-host.ps1';PowerShellExe='C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
-        Xml=@'
-<?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-<Triggers><LogonTrigger><Enabled>true</Enabled><UserId>S-1-5-21-111-222-333-1001</UserId></LogonTrigger></Triggers>
-<Principals><Principal id="Owner"><UserId>S-1-5-21-111-222-333-1001</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
-<Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>false</AllowHardTerminate><StartWhenAvailable>true</StartWhenAvailable><RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable><Enabled>true</Enabled><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><Priority>4</Priority><RestartOnFailure><Interval>PT1M</Interval><Count>3</Count></RestartOnFailure></Settings>
-<Actions Context="Owner"><Exec><Command>C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe</Command><Arguments>-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\Disposable\Acceptance\fixture-host.ps1" -LauncherDirectory "C:\Disposable\Acceptance" -UserSid S-1-5-21-111-222-333-1001</Arguments><WorkingDirectory>C:\Disposable\Acceptance</WorkingDirectory></Exec></Actions>
-</Task>
-'@
-    }
+    $definition=New-HouseholdTaskDefinition 'S-1-5-21-111-222-333-1001' $fixtureRoot (Join-Path $fixtureRoot 'fixture-host.ps1') (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') $taskName
     $task=[pscustomobject]@{xml=$definition.Xml}
     $adapter=@{
         GetTask={$task}.GetNewClosure()
@@ -161,13 +148,6 @@ exit 2
         Assert-True ($v.alias -ceq 'fixture' -and $v.tunnel_id -ceq 'fixture-only' -and $v.process_running -eq $false)
     } finally {$env:TUNNEL_CLIENT_STATE_DIR=$oldState;$env:TUNNEL_CLIENT_PROFILE_DIR=$oldProfile;$env:CONTROL_PLANE_API_KEY=$oldKey}
 }
-function Test-NativeAdapterContract {
-    param([string]$Module,[string]$Factory)
-    $full=[IO.Path]::GetFullPath($Module)
-    if(!$full.StartsWith($repo+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'ADAPTER_MODULE_OUTSIDE_REPOSITORY'}
-    Import-Module $full -Force -ErrorAction Stop
-    $null=Get-Command $Factory -CommandType Function -ErrorAction Stop
-}
 
 try {
     New-Item -ItemType Directory -Path $fixtureRoot,$projectRoot,$stateRoot,$profileRoot,$keyRoot | Out-Null
@@ -208,7 +188,6 @@ try {
         Assert-Throws {Invoke-OwnedUpdate $u.destination $u.payload2 $u.adapter} 'TRANSACTION_UPDATE_INCOMPLETE'
         Assert-True (Test-Path -LiteralPath (Join-Path $u.destination 'incomplete-install.json'))
     }
-    Add-Result 'incomplete_install_verified_recovery' SKIP_EXTERNAL 'WORKER_A_RECOVERY_SURFACE_REQUIRED' 'transaction'
     Invoke-Case 'foreign_task_refusal' 'transaction' {
         $f=New-TransactionFixture 'foreign-task';$f.state.Foreign=$true
         Assert-Throws {Invoke-InstallTransaction $f.destination $f.payload1 $f.adapter} 'TRANSACTION_FOREIGN_TASK'
@@ -252,25 +231,25 @@ try {
     Invoke-Case 'harmless_local_tunnel_client_fixture' 'tunnel-fixture' {Invoke-HarmlessTunnelFixture}
     Invoke-Case 'unique_disposable_scheduler_duplicate_start' 'windows-live' {Invoke-LiveSchedulerProbe} 'UNIQUE_TASK_COOPERATIVE_LIFECYCLE'
 
-    if([string]::IsNullOrWhiteSpace($NativeAdapterModule)){Add-Result 'worker_a_native_adapter_contract' SKIP_EXTERNAL 'WORKER_A_ADAPTER_NOT_PRESENT' 'integration'}
-    else {Invoke-Case 'worker_a_native_adapter_contract' 'integration' {Test-NativeAdapterContract $NativeAdapterModule $NativeAdapterFactory} 'ADAPTER_FACTORY_DISCOVERED'}
-
-    if([string]::IsNullOrWhiteSpace($PublishedCodexlessRoot)){
-        Add-Result 'published_codexless_fresh_install_start_status_doctor' BLOCKED_UNPUBLISHED_ARTIFACT 'QUALIFIED_CODEXLESS_UNPUBLISHED' 'published-artifact'
-    } else {
-        Invoke-Case 'published_codexless_identity' 'published-artifact' {$identity=Get-CodexlessReleaseIdentity $PublishedCodexlessRoot;Assert-True ($identity.hostContractVersion -ceq 'codexless-public-preview-v1')} 'QUALIFIED_RELEASE_IDENTITY_VERIFIED'
-        Add-Result 'published_codexless_fresh_install_start_status_doctor' SKIP_EXTERNAL 'WORKER_A_NATIVE_EXECUTION_BRIDGE_REQUIRED' 'published-artifact'
+    $nativeReport=Join-Path $fixtureRoot 'native-report.json'
+    & powershell.exe -NoProfile -File (Join-Path $PSScriptRoot 'native-disposable-acceptance.ps1') -CandidateRoot $LocalCandidateRoot -ReportPath $nativeReport
+    $nativeExit=$LASTEXITCODE
+    if(Test-Path -LiteralPath $nativeReport){
+        $native=Get-Content -LiteralPath $nativeReport -Raw|ConvertFrom-Json
+        foreach($row in $native.results){Add-Result ('native_'+$row.name) $row.status $row.code 'native-local-candidate'}
+    }else{Add-Result 'native_report' FAIL 'NATIVE_REPORT_MISSING' 'integration'}
+    if($nativeExit -ne 0 -and @($results|Where-Object status -eq FAIL).Count -eq 0){Add-Result 'native_execution' FAIL 'NATIVE_PROCESS_FAILED' 'integration'}
+    foreach($suite in @('transaction-task-replacement-race','transaction-reparse-race','tunnel-native-lifetime')){
+        $suiteArgs=@('-NoProfile','-File',(Join-Path $PSScriptRoot ($suite+'.ps1')))
+        if($suite -eq 'tunnel-native-lifetime'){$suiteArgs+=@('-QualifiedTunnelExe',$QualifiedTunnelExe)}
+        $lines=@(& powershell.exe @suiteArgs)
+        $exitCode=$LASTEXITCODE
+        $index=0
+        foreach($line in $lines){if([string]$line -match '^PASS '){$index++;Add-Result ($suite+'_'+$index) PASS 'REAL_DISPOSABLE_REGRESSION' $suite}}
+        if($exitCode -ne 0 -or $index -eq 0){Add-Result $suite FAIL 'REGRESSION_PROCESS_FAILED' $suite}
     }
-    if([string]::IsNullOrWhiteSpace($QualifiedTunnelExe)){Add-Result 'qualified_tunnel_v0_0_14_native_lifetime' SKIP_EXTERNAL 'QUALIFIED_TUNNEL_EXE_NOT_SUPPLIED' 'tunnel-native'}
-    else {
-        Invoke-Case 'qualified_tunnel_v0_0_14_version_only' 'tunnel-native' {
-            $pin='fcc85a69ec0ad82518e4f8964f60c45e31787957782a0fc9c1b0c44e82d61b9b'
-            Assert-True ((Get-FileHash -LiteralPath $QualifiedTunnelExe -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $pin)
-            $raw=& $QualifiedTunnelExe --version
-            if($LASTEXITCODE -ne 0 -or ($raw|Out-String) -notmatch '0\.0\.14'){throw 'unsupported'}
-        } 'PINNED_CLIENT_VERSION_OBSERVED'
-        Add-Result 'qualified_tunnel_v0_0_14_native_lifetime' SKIP_EXTERNAL 'USE_EXISTING_QUALIFIED_DISPOSABLE_LIFETIME_CHECK' 'tunnel-native'
-    }
+    Add-Result 'published_codexless_fresh_install_start_status_doctor' BLOCKED_UNPUBLISHED_ARTIFACT 'QUALIFIED_CODEXLESS_UNPUBLISHED' 'published-artifact'
+    Add-Result 'remote_tunnel_connect_acceptance' SKIP_EXTERNAL 'REQUIRES_SEPARATE_DISPOSABLE_BACKEND_AND_NONPRODUCTION_CREDENTIALS' 'external-backend'
 }
 finally {
     if($schedulerTaskRegistered -and $schedulerTaskName){
@@ -282,7 +261,10 @@ finally {
             if($null -ne $task -and $task.State -ne 'Running'){Unregister-ScheduledTask -TaskName $schedulerTaskName -TaskPath '\' -Confirm:$false -ErrorAction SilentlyContinue}
         } catch {}
     }
-    try {if(Test-Path -LiteralPath $fixtureRoot){Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction Stop}} catch {}
+    $resolved=[IO.Path]::GetFullPath($fixtureRoot)
+    $expected=[IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetTempPath()) ('CodexlessDisposableAcceptance-'+$runId)))
+    if($resolved -cne $expected){throw 'DISPOSABLE_CLEANUP_PATH_INVALID'}
+    if(!$schedulerTaskRegistered -and (Test-Path -LiteralPath $resolved)){Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction Stop}
 }
 
 $failed=@($results|Where-Object {$_.status -ceq 'FAIL'}).Count

@@ -36,16 +36,18 @@
 
 - [x] Bind settings + qualified Codexless release/build identity to each owner generation and revalidate it throughout prior-boot recovery.
 - [x] Reproduce the qualified Codexless npm production dependency closure from its frozen shrinkwrap and control inherited NODE_OPTIONS.
-- [ ] Qualify the distributable Node runtime binary/version and tunnel-client binary/version/provenance.
+- [x] Qualify the pinned Node executable and official tunnel-client version/provenance locally.
 - [x] Pin the official Node 24.12.0 Windows x64 archive and implement verified, bounded staging with safe ZIP extraction.
-- [ ] Select and qualify the portable tunnel-client distribution/version/archive checksum; bind the published Codexless download artifact.
+- [x] Select and qualify the portable tunnel-client distribution/version/archive checksum.
+- [ ] Bind the exact published Codexless download artifact; the qualified local candidate remains unpublished.
 - [x] Qualify exact fresh-generation managed tunnel launch, bounded status and guarded official stop.
-- [ ] Add bounded native tunnel status/connect/stop execution.
+- [x] Add bounded native tunnel status/connect/stop execution.
 - [x] Add internal staged transaction engines, incomplete fences and ownership-verified adapter contracts.
 - [x] Add a same-machine disposable acceptance harness with unique roots, ports and task identity plus sanitized machine-readable reporting; this is not different-machine acceptance.
-- [ ] Qualify the real package/task/provenance adapter before enabling install/repair/uninstall/update mutation.
-- [ ] Add update + rollback transaction: detect -> stage -> verify -> stop -> promote -> restart -> rollback on failure.
-- [ ] Add download/provenance flow and archive checksum verification for qualified binaries.
+- [x] Wire the real package/task/provenance adapter into isolated native acceptance using the exact unpublished local candidate.
+- [ ] Complete publication and second-machine acceptance before enabling public installer mutation.
+- [x] Add update + rollback transaction: detect -> stage -> verify -> stop -> promote -> restart -> rollback on failure.
+- [x] Add download/provenance flow and archive checksum verification for qualified binaries.
 - [ ] Test clean installation under a different Windows user and different paths.
 - [ ] Test concurrency, interruption, duplicate Start, Stop -> Start, Desktop close/reopen, shutdown and full Windows reboot recovery.
 - [ ] Run current-tree, complete-history and release-archive privacy scans before friend distribution.
