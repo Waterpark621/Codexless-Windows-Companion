@@ -8,7 +8,18 @@ $passed=0
 function Assert([bool]$value){if(!$value){throw 'assertion failed'}}
 function Test([string]$name,[scriptblock]$body){& $body;$script:passed++;Write-Output "PASS $name"}
 Test 'Node source version and archive checksum are explicitly pinned' {$p=Get-ArtifactPolicy node;Assert ($p.version -ceq '24.12.0' -and $p.url.StartsWith('https://nodejs.org/dist/v24.12.0/') -and $p.sha256 -cmatch '^[0-9a-f]{64}$')}
-foreach($role in @('codexless')){Test "Unbound $role cannot initiate download or mutation" {$dest=Join-Path $root $role;$failed=$false;try{Save-QualifiedArtifact $role $dest|Out-Null}catch{$failed=$_.Exception.Message -like 'PROVENANCE_POLICY_UNBOUND:*'};Assert $failed;Assert (!(Test-Path -LiteralPath $dest))}}
+Test 'Unpublished Codexless fixture cannot initiate download or mutation' {
+    # Shipping metadata is published. Preserve this security refusal using an
+    # explicit private unpublished policy fixture, not the shipping repository.
+    $binding=Get-CodexlessDistributionBinding
+    $binding.state='unpublished';$binding.url=$null;$binding.archiveFileName=$null;$binding.sha256=$null
+    & $module {param($p) $script:UnpublishedFixture=$p;function script:Get-CodexlessDistributionBinding {$script:UnpublishedFixture}} $binding
+    $dest=Join-Path $root 'codexless';$failed=$false
+    try{Save-QualifiedArtifact codexless $dest|Out-Null}catch{$failed=$_.Exception.Message -like 'PROVENANCE_POLICY_UNBOUND:*'}
+    Assert $failed;Assert (!(Test-Path -LiteralPath $dest))
+    Import-Module (Join-Path $PSScriptRoot '../ArtifactProvenance.psm1') -Force
+    $script:module=Get-Module ArtifactProvenance
+}
 
 Test 'Approved full tunnel client pins archive and executable independently' {$p=Get-ArtifactPolicy tunnel;Assert ($p.version -ceq '0.0.14' -and $p.executableSha256 -ceq 'fcc85a69ec0ad82518e4f8964f60c45e31787957782a0fc9c1b0c44e82d61b9b')}
 Test 'Only approved GitHub asset CDN redirect is allowed' {$p=Get-ArtifactPolicy tunnel;& $module {param($p) Assert-ArtifactRedirect $p ([Uri]'https://release-assets.githubusercontent.com/github-production-release-asset/fixture?temporary=fixture')} $p}
