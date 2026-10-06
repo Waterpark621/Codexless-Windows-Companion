@@ -8,7 +8,7 @@ Stop holds a synchronize/query process handle through the official command and e
 
 Holding a Windows process handle retains the process object and prevents that PID from being reused until all handles close. See the Microsoft PROCESS_INFORMATION contract. This mechanism does not defend against a malicious process already running as the same Windows account; that account already controls its runtime credentials and install files.
 
-The installer remains plan-only. Clean-machine security-policy acceptance, transactional install/repair/uninstall and update/rollback remain separate gates. Deterministic tests use mocks and private disposable fixture state; no production key or alias is required.
+The installer wires the existing qualified install transaction and optional DPAPI tunnel configuration. Clean-machine security-policy and live credentialed acceptance remain pending. Deterministic tests use mocks and private disposable fixture state; no production key or alias is required.
 
 The official stop CLI is created suspended with an explicit inherited stdio handle list. Before its first instruction, Companion duplicates the exact managed lifetime query/synchronize handle into that process, then resumes it. The stop child keeps that guard until it exits, even if the caller times out or dies. A failed guard transfer never resumes the child and reports a fenced suspended lifetime; no process is force-killed. This avoids releasing the PID pin while an indeterminate stop command could still act.
 

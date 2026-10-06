@@ -13,10 +13,10 @@ Test 'Unpublished production binding exposes exact remaining publication fields'
     $binding=Get-CodexlessDistributionBinding
     Assert ($binding.state -ceq 'unpublished')
     Assert ($binding.version -ceq '0.1.2-preview.1')
-    Assert ($binding.candidateHead -ceq '1bc8b5f6f45b88cc4bc311604178407992bcc9d2')
-    Assert ($binding.buildId -ceq '7e416d0f32e67cffa6af1ba9ea4339dc738fdc86115263336229cc9fd46c8308')
-    Assert ($binding.sourceRevision -ceq '1da3cb5b8563370f3656c831d17a1c73354df282')
-    Assert ($binding.releaseManifestSha256 -ceq '14583de39b1218ff44477b62519f7cc6351ec7c33259cf24c334ef0ed5cccb9d')
+    Assert ($binding.candidateHead -ceq 'f31549b635090acc78627e1fe2db7e8419dcd7b8')
+    Assert ($binding.buildId -ceq '15a17579c9c78448bbbd9af5a6589b1817dbf2fbae968cea7ff16a2fe4837898')
+    Assert ($binding.sourceRevision -ceq 'af80d290a265b414de9792b1b53600180be4c0e2')
+    Assert ($binding.releaseManifestSha256 -ceq '56f35e9c5b92f8ffca6279ce5bcf8d63ab249489751f900ab564bd7be522fc78')
     Assert ((@($binding.publicationRequiredFields) -join '|') -ceq 'state=published|url|archiveFileName|sha256')
 }
 Test 'Unbound Codexless distribution refuses before staging mutation' {

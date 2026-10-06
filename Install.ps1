@@ -1,5 +1,5 @@
 param(
-    [Parameter(Mandatory=$true)][string]$CodexlessRoot,
+    [string]$CodexlessRoot,
     [Parameter(Mandatory=$true)][string]$ProjectPath,
     [string]$NodeExe,
     [ValidateRange(1,65535)][int]$Port=7690,
@@ -8,13 +8,25 @@ param(
     [string]$TunnelClientExe,
     [string]$TunnelId,
     [string]$TunnelAlias='codexless',
+    [string]$TrustedPayloadSha256,
+    [string]$CodexlessArchivePath,
+    [Security.SecureString]$TunnelRuntimeKey,
+    [switch]$Recover,
     [switch]$PlanOnly
 )
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 
 Import-Module (Join-Path $PSScriptRoot 'ArtifactProvenance.psm1') -Force -DisableNameChecking
-if(!$PlanOnly){[void](Get-ArtifactPolicy codexless)}
+if(!$PlanOnly){
+    [void](Get-ArtifactPolicy codexless)
+    if($CodexlessRoot){throw 'INSTALL_INPUT_INVALID: Non-plan installation stages the pinned archive; use CodexlessArchivePath for an offline verified archive.'}
+    Import-Module (Join-Path $PSScriptRoot 'PublicInstall.psm1') -Force -DisableNameChecking
+    try {
+        Invoke-PublicCompanionInstall -PayloadRoot $PSScriptRoot -TrustedPayloadSha256 $TrustedPayloadSha256 -InstallDirectory $InstallDirectory -ProjectPath $ProjectPath -NodeExe $NodeExe -Port $Port -CodexlessArchivePath $CodexlessArchivePath -TunnelClientExe $TunnelClientExe -TunnelId $TunnelId -TunnelAlias $TunnelAlias -TunnelRuntimeKey $TunnelRuntimeKey -NoTunnel:$NoTunnel -Recover:$Recover | ConvertTo-Json -Depth 6
+    } finally {$TunnelRuntimeKey=$null}
+    exit 0
+}
 
 function Resolve-InputPath {
     param([string]$Value,[string]$Label,[ValidateSet('File','Directory')][string]$Kind)
@@ -80,13 +92,13 @@ if(!$NoTunnel){
         tunnelId=$TunnelId
         executable=$tunnelExeResolved
         credentialStorage='planned: current-user Windows DPAPI under Companion install root'
-        automaticConnect='qualified exact generation only; mutating installer remains disabled'
+        automaticConnect='qualified exact generation only'
     }
 }
 
 $plan=[pscustomobject]@{
     preview=$true
-    mutatingInstallEnabled=$false
+    mutatingInstallEnabled=$true
     installDirectory=$installDirectory
     taskName=("Codexless-Household-"+$sid)
     userSid=$sid
@@ -105,8 +117,7 @@ $plan=[pscustomobject]@{
     port=$Port
     tunnel=$tunnelPlan
     blockers=@(
-        'repair/uninstall/update rollback',
-        'clean second-user/machine acceptance'
+        'published exact distribution and externally trusted Companion payload digest required for mutation'
     )
 }
 
@@ -114,5 +125,3 @@ if($PlanOnly){
     $plan|ConvertTo-Json -Depth 7
     exit 0
 }
-
-throw 'INSTALL_DISABLED_PUBLIC_PREVIEW: Mutating installation is intentionally disabled. Re-run with -PlanOnly to inspect the proposed destination and dependencies.'

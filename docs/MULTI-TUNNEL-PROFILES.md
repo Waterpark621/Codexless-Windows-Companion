@@ -2,7 +2,7 @@
 
 The simple install plan still describes zero tunnels or one default tunnel. Advanced management extends that default into a collection of up to 64 profiles. It uses the same Scheduled Task, household supervisor, mutation lock, generation contract, per-alias namespaces, official client and exact lifetime receipts.
 
-Run `Tunnels.ps1` from the **current installed generation**, with an explicit destination `-Root`. The public installer remains plan-only; these operations require an already verified transactional install. Publication and clean second-machine acceptance remain separate gates.
+Run `Tunnels.ps1` from the **current installed generation**, with an explicit destination `-Root`. The public installer uses the existing transaction engine; these Advanced operations require an already verified transactional install. Published artifact binding is required. Clean second-machine acceptance remains pending.
 
 Examples below use a PowerShell variable `$installedGeneration` for the current Companion generation directory and `$destination` for its install root.
 

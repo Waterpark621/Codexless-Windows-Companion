@@ -6,9 +6,9 @@ Import-Module (Join-Path $PSScriptRoot 'ArtifactProvenance.psm1')
 $script:SupportedHostContractVersion = 'codexless-public-preview-v1'
 $script:QualifiedCodexlessRelease = [pscustomobject]@{
     version='0.1.2-preview.1'
-    buildId='7e416d0f32e67cffa6af1ba9ea4339dc738fdc86115263336229cc9fd46c8308'
-    sourceRevision='1da3cb5b8563370f3656c831d17a1c73354df282'
-    manifestSha256='14583de39b1218ff44477b62519f7cc6351ec7c33259cf24c334ef0ed5cccb9d'
+    buildId='15a17579c9c78448bbbd9af5a6589b1817dbf2fbae968cea7ff16a2fe4837898'
+    sourceRevision='af80d290a265b414de9792b1b53600180be4c0e2'
+    manifestSha256='56f35e9c5b92f8ffca6279ce5bcf8d63ab249489751f900ab564bd7be522fc78'
 }
 
 function Get-RequiredProperty {

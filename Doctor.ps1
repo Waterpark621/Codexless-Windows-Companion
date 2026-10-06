@@ -1,6 +1,7 @@
 param(
     [string]$InstallDirectory=(Join-Path $env:LOCALAPPDATA 'CodexlessCompanion'),
-    [switch]$Json
+    [switch]$Json,
+    [ValidatePattern('^$|^Codexless-NativeAdapter-Test-[0-9a-f]{32}$')][string]$DisposableTaskName
 )
 $ErrorActionPreference='Stop'
 $checks=New-Object Collections.Generic.List[object]
@@ -26,8 +27,8 @@ try {
     if (!(Test-Path -LiteralPath $InstallDirectory -PathType Container)) {
         throw 'DOCTOR_INSTALL_DIRECTORY_MISSING'
     }
-    $runtime=Join-Path $InstallDirectory 'CompanionRuntime.psm1'
-    $support=Join-Path $InstallDirectory 'DoctorSupport.psm1'
+    $runtime=Join-Path $PSScriptRoot 'CompanionRuntime.psm1'
+    $support=Join-Path $PSScriptRoot 'DoctorSupport.psm1'
     if (!(Test-Path -LiteralPath $runtime -PathType Leaf) -or !(Test-Path -LiteralPath $support -PathType Leaf)) {
         throw 'DOCTOR_PACKAGE_INCOMPLETE'
     }
@@ -41,7 +42,7 @@ try {
     Add-Check 'node' 'PASS' 'Configured Node executable is available.'
 
     $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-    $taskName="Codexless-Household-$sid"
+    $taskName=if($DisposableTaskName){$DisposableTaskName}else{"Codexless-Household-$sid"}
     $task=Get-ScheduledTask -TaskName $taskName -TaskPath ([string][char]92) -ErrorAction SilentlyContinue
     if ($null -eq $task) {
         Add-Check 'task' 'FAIL' 'Scheduled Task is not registered.'
@@ -54,7 +55,7 @@ try {
         }
 
         try {
-            $raw=(& (Join-Path $InstallDirectory 'Household-Task.ps1') -Action Status -LauncherDirectory $InstallDirectory | Out-String).Trim()
+            $raw=(& (Join-Path $PSScriptRoot 'Household-Task.ps1') -Action Status -LauncherDirectory $InstallDirectory -DisposableTaskName $DisposableTaskName | Out-String).Trim()
             $status=$raw|ConvertFrom-Json -ErrorAction Stop
             $ownerState=if($status.taskState -eq 'Running' -and $status.ownerVerified -and $status.piecesVerified -and !$status.cleanupRequired){'PASS'}else{'FAIL'}
             Add-Check 'owner' $ownerState $(if($ownerState -ceq 'PASS'){'Household owner and tracked pieces are verified.'}else{'Household owner or tracked pieces could not be verified.'})
@@ -62,7 +63,7 @@ try {
             Add-Check 'owner' 'FAIL' 'Household ownership status could not be verified.'
         }
 
-        $ownershipBefore=Get-DoctorListenerOwnershipSnapshot $InstallDirectory $cfg
+        $ownershipBefore=Get-DoctorListenerOwnershipSnapshot $InstallDirectory $cfg -DisposableTaskName $DisposableTaskName
         $ownershipMid=$null
         $ownershipAfter=$null
         $readinessOk=$false
@@ -71,11 +72,11 @@ try {
         if($null -ne $ownershipBefore){
             $readinessOk=Test-CodexlessReady $cfg
             if($readinessOk){
-                $ownershipMid=Get-DoctorListenerOwnershipSnapshot $InstallDirectory $cfg
+                $ownershipMid=Get-DoctorListenerOwnershipSnapshot $InstallDirectory $cfg -DisposableTaskName $DisposableTaskName
             }
             if($readinessOk -and (Test-DoctorOwnershipSnapshotEqual $ownershipBefore $ownershipMid)){
                 $browserResult=Get-DoctorBrowserAcceptance $InstallDirectory $cfg
-                $ownershipAfter=Get-DoctorListenerOwnershipSnapshot $InstallDirectory $cfg
+                $ownershipAfter=Get-DoctorListenerOwnershipSnapshot $InstallDirectory $cfg -DisposableTaskName $DisposableTaskName
             }
         }
 

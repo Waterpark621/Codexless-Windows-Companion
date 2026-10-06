@@ -25,7 +25,7 @@ function Test([string]$name,[scriptblock]$body){& $body;$script:passed++;Write-O
   $script:tunnelOwned=$true
   $script:tunnelStatus=[pscustomobject]@{process_running=$true;ready=$true;healthy=$true}
   $script:browserResult=[pscustomobject]@{exitCode=0;output='{"ok":true,"browserStatus":"ok","chromeSkill":"ok","nodeRepl":"ok","supportedBackendCount":2,"selectionRequired":true}'}
-  function script:Test-HouseholdOwnerIdentity { param($Receipt,$Process,$Definition) $null -ne $Process -and $Process.pid -eq 101 }
+  function script:Test-HouseholdOwnerIdentity { param($Receipt,$Process,$Definition) $script:lastDefinition=$Definition;$null -ne $Process -and $Process.pid -eq 101 }
   function script:Test-PrivateConsoleReceipt { param($Receipt,$Identity,$CurrentUserSid) $null -ne $Identity -and $Identity.pid -eq 202 }
   function script:Test-PrivateConsoleListener { param($ReceiptPath,$Port) $script:listenerOk }
   function script:Get-ConsoleProcessIdentity {
@@ -47,6 +47,23 @@ Test 'Listener snapshot binds wrapper receipt root to verified household host' {
   & $module {$script:wrapperParent=999}
   Assert ($null -eq (Get-DoctorListenerOwnershipSnapshot $root $cfg))
   & $module {$script:wrapperParent=101}
+}
+Test 'Doctor binds the installed immutable generation and transaction rather than a flat host path' {
+  $path=Join-Path $root 'native-adapter-owner.json'
+  [IO.File]::WriteAllText($path,('{"version":2,"state":"active","transactionId":"'+('a'*32)+'","generationId":"'+('b'*32)+'"}'))
+  Assert ($null -ne (Get-DoctorListenerOwnershipSnapshot $root $cfg))
+  $seen=& $module {$script:lastDefinition}
+  Assert ($seen.TransactionId -ceq ('a'*32) -and $seen.GenerationId -ceq ('b'*32))
+  Assert ($seen.HostScript -ceq (Join-Path ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))) 'Task-Host.ps1'))
+  Remove-Item -LiteralPath $path
+}
+Test 'Malformed or oversized native generation metadata cannot authorize Doctor ownership' {
+  $path=Join-Path $root 'native-adapter-owner.json'
+  foreach($content in @('{}','{"version":2,"state":"retired"}',('x'*32769))){
+    [IO.File]::WriteAllText($path,$content)
+    Assert ($null -eq (Get-DoctorListenerOwnershipSnapshot $root $cfg))
+  }
+  Remove-Item -LiteralPath $path
 }
 Test 'Missing wrapper evidence fails closed' {
   Remove-Item -LiteralPath (Join-Path $root 'codexless.pid') -Force

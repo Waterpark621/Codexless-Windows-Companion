@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory=$true)] [ValidateSet('Register','Start','Stop','Restart','Status','Definition')] [string]$Action,
-    [string]$LauncherDirectory=(Join-Path $env:LOCALAPPDATA 'CodexlessCompanion')
+    [string]$LauncherDirectory=(Join-Path $env:LOCALAPPDATA 'CodexlessCompanion'),
+    [ValidatePattern('^$|^Codexless-NativeAdapter-Test-[0-9a-f]{32}$')][string]$DisposableTaskName
 )
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1') -Force
@@ -23,6 +24,8 @@ if (Test-Path -LiteralPath $nativeOwnerPath -PathType Leaf) {
     $definitionParameters.TransactionId=[string]$nativeOwner.transactionId
     $definitionParameters.GenerationId=[string]$nativeOwner.generationId
 }
+# Only the existing GUID-scoped native acceptance namespace is overridable.
+if($DisposableTaskName){$definitionParameters.TaskName=$DisposableTaskName}
 $definition = New-HouseholdTaskDefinition @definitionParameters
 if ($Action -eq 'Definition') { $definition.Xml; exit 0 }
 Assert-HouseholdPrincipal $currentSid $ownerSid

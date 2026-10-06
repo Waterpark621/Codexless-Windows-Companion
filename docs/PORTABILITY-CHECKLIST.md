@@ -21,13 +21,13 @@
 ## Public-preview safety gate
 
 - [x] `Install.ps1 -PlanOnly` validates the proposed release, project, Node, port and optional tunnel inputs without mutation.
-- [x] `Install.ps1` refuses mutating installation by default with `INSTALL_DISABLED_PUBLIC_PREVIEW`.
+- [x] `Install.ps1` refuses unpublished or incomplete distribution metadata before mutation; published policy dispatches to the existing transaction engine.
 - [x] Fully qualified drive paths are required; root-relative, drive-relative and UNC inputs are rejected.
 - [x] Existing live tunnel processes require an exact pre-existing Companion ownership receipt; they are never adopted from creation time alone.
-- [x] Automatic tunnel connect is disabled pending a positively attributable launch-provenance contract.
+- [x] Automatic tunnel connect requires exact generation and process provenance; foreign or ambiguous processes are never adopted.
 - [x] Tunnel-client connect output is suppressed; fixed diagnostics are used instead of persisting raw client/exception text.
 - [x] A pre-existing runtime-key environment value is restored after a connect helper call.
-- [x] DPAPI destination-local credential storage is fixture-tested, but the preview installer does not collect/store a key.
+- [x] The installer accepts/prompts for a SecureString runtime key and the existing native adapter stores it using destination-local current-user DPAPI.
 - [x] Read-only Doctor checks settings, release identity, task/owner state, readiness, and official tunnel status.
 - [x] Friendly Start / Stop / Restart / Status development entrypoints exist.
 - [x] Doctor directly verifies listener ancestry, exact tunnel ownership receipts, and read-only Browser backend connectivity.
@@ -45,7 +45,7 @@
 - [x] Add internal staged transaction engines, incomplete fences and ownership-verified adapter contracts.
 - [x] Add a same-machine disposable acceptance harness with unique roots, ports and task identity plus sanitized machine-readable reporting; this is not different-machine acceptance.
 - [x] Wire the real package/task/provenance adapter into isolated native acceptance using the exact unpublished local candidate.
-- [ ] Complete publication and second-machine acceptance before enabling public installer mutation.
+- [ ] Publish and bind the exact Codexless archive before distributing the friend installer. External acceptance remains pending separately.
 - [x] Add update + rollback transaction: detect -> stage -> verify -> stop -> promote -> restart -> rollback on failure.
 - [x] Add download/provenance flow and archive checksum verification for qualified binaries.
 - [ ] Test clean installation under a different Windows user and different paths.

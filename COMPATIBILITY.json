@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "packageKind": "codexless-windows-companion",
   "companionVersion": "0.1.0-dev",
-  "status": "public-preview-prep-nonmutating",
+  "status": "public-installer-implemented-awaiting-distribution-publication",
   "sourceLineage": {
     "validatedHouseholdCommit": "37686a932ff0c355d363cd4dc3bbf1a9c3a46dc1"
   },
@@ -15,10 +15,10 @@
     "distribution": "Waterpark621/Codexless",
     "qualifiedRelease": {
       "version": "0.1.2-preview.1",
-      "candidateHead": "1bc8b5f6f45b88cc4bc311604178407992bcc9d2",
-      "buildId": "7e416d0f32e67cffa6af1ba9ea4339dc738fdc86115263336229cc9fd46c8308",
-      "sourceRevision": "1da3cb5b8563370f3656c831d17a1c73354df282",
-      "manifestSha256": "14583de39b1218ff44477b62519f7cc6351ec7c33259cf24c334ef0ed5cccb9d"
+      "candidateHead": "f31549b635090acc78627e1fe2db7e8419dcd7b8",
+      "buildId": "15a17579c9c78448bbbd9af5a6589b1817dbf2fbae968cea7ff16a2fe4837898",
+      "sourceRevision": "af80d290a265b414de9792b1b53600180be4c0e2",
+      "manifestSha256": "56f35e9c5b92f8ffca6279ce5bcf8d63ab249489751f900ab564bd7be522fc78"
     },
     "hostContractVersion": "codexless-public-preview-v1"
   },
@@ -30,7 +30,7 @@
   "portability": {
     "portableRuntimeBinding": true,
     "installPlannerImplemented": true,
-    "mutatingInstallEnabled": false,
+    "mutatingInstallEnabled": true,
     "automaticTunnelConnectEnabled": true,
     "doctorImplemented": true,
     "doctorAcceptanceV1Implemented": true,
@@ -45,12 +45,15 @@
     "boundedNativeSubstrateImplemented": true,
     "friendInstallReady": false,
     "remainingBlockers": [
-      "publish exact Codexless 0.1.2-preview.1 archive and bind immutable URL, archive filename, and SHA-256",
-      "clean second-user/machine and Windows security-policy acceptance"
+      "publish exact Codexless 0.1.2-preview.1 archive and bind immutable URL, archive filename, and SHA-256"
     ],
     "tunnelLaunchProvenanceImplemented": true,
     "installTransactionSubstrateImplemented": true,
     "updateRollbackSubstrateImplemented": true,
-    "nativeInstallAdapterQualified": true
+    "nativeInstallAdapterQualified": true,
+    "externalAcceptancePending": [
+      "clean second-user/machine and Windows security-policy acceptance",
+      "live credentialed multi-tunnel acceptance"
+    ]
   }
 }

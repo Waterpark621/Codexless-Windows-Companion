@@ -5,7 +5,8 @@ Import-Module (Join-Path $PSScriptRoot 'VerifiedTunnel.psm1') -Force -DisableNam
 Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1') -Force
 
 function Get-DoctorListenerOwnershipSnapshot {
-    param([string]$InstallDirectory,$Config)
+    param([string]$InstallDirectory,$Config,
+        [ValidatePattern('^$|^Codexless-NativeAdapter-Test-[0-9a-f]{32}$')][string]$DisposableTaskName)
     try {
         $settingsPath=Join-Path $InstallDirectory 'settings.json'
         $ownerReceiptPath=Join-Path $InstallDirectory 'task-owner.json'
@@ -20,7 +21,17 @@ function Get-DoctorListenerOwnershipSnapshot {
         $ownerSid=(Get-Acl -LiteralPath $settingsPath -ErrorAction Stop).GetOwner([Security.Principal.SecurityIdentifier]).Value
         if($ownerSid -cne $currentSid){return $null}
 
-        $definition=New-HouseholdTaskDefinition -UserSid $ownerSid -LauncherDirectory $InstallDirectory -HostScript (Join-Path $InstallDirectory 'Task-Host.ps1') -PowerShellExe (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe')
+        $definitionParameters=@{UserSid=$ownerSid;LauncherDirectory=$InstallDirectory;HostScript=(Join-Path $PSScriptRoot 'Task-Host.ps1');PowerShellExe=(Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe')}
+        $nativePath=Join-Path $InstallDirectory 'native-adapter-owner.json'
+        if(Test-Path -LiteralPath $nativePath){
+            if((Get-Item -LiteralPath $nativePath -Force).Length -gt 32768 -or ((Get-Item -LiteralPath $nativePath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){return $null}
+            $native=Get-Content -LiteralPath $nativePath -Raw|ConvertFrom-Json
+            if($native.version -notin @(1,2) -or $native.state -cne 'active' -or $native.transactionId -cnotmatch '^[0-9a-f]{32}$' -or $native.generationId -cnotmatch '^[0-9a-f]{32}$'){return $null}
+            $definitionParameters.TransactionId=$native.transactionId
+            $definitionParameters.GenerationId=$native.generationId
+        }
+        if($DisposableTaskName){$definitionParameters.TaskName=$DisposableTaskName}
+        $definition=New-HouseholdTaskDefinition @definitionParameters
 
         $ownerReceipt=Get-Content -LiteralPath $ownerReceiptPath -Raw -ErrorAction Stop|ConvertFrom-Json -ErrorAction Stop
         $hostPid=0
@@ -83,7 +94,7 @@ function Get-DoctorTunnelAcceptance {
 }
 function Invoke-BrowserProbeProcess {
     param($Config,[string]$InstallDirectory)
-    $probe=Join-Path $InstallDirectory 'BrowserProbe.mjs'
+    $probe=Join-Path $PSScriptRoot 'BrowserProbe.mjs'
     if(!(Test-Path -LiteralPath $probe -PathType Leaf)){
         return [pscustomobject]@{exitCode=1;output=''}
     }
