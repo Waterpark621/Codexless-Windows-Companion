@@ -67,32 +67,20 @@ function Test-DoctorOwnershipSnapshotEqual {
 
 function Get-DoctorTunnelAcceptance {
     param([string]$InstallDirectory,$Config)
-    $configured=@($Config.tunnels)
-    if($configured.Count -eq 0){
-        return [pscustomobject]@{state='SKIP';detail='Tunnel support is disabled.'}
+    $configured=@(Get-ConfiguredTunnels $Config)
+    if($configured.Count -eq 0){return [pscustomobject]@{state='SKIP';detail='Tunnel support is disabled.';profiles=@()}}
+    $results=@()
+    foreach($tunnel in $configured){
+        $state='FAIL'
+        try {
+            $status=Get-TunnelStatus $Config $tunnel
+            if($null -ne $status -and $status.process_running -eq $true -and $status.ready -eq $true -and $status.healthy -eq $true -and
+               (Test-OwnedTunnel $InstallDirectory $Config $tunnel $status)){$state='PASS'}
+        } catch {}
+        $results += [pscustomobject]@{alias=$tunnel.alias;state=$state}
     }
-    if($configured.Count -ne 1){
-        return [pscustomobject]@{state='FAIL';detail='Preview Doctor accepts exactly one configured tunnel.'}
-    }
-    try {
-        $tunnel=$configured[0]
-        $status=Get-TunnelStatus $Config $tunnel
-        if($null -eq $status -or
-           !$status.PSObject.Properties['process_running'] -or
-           $status.process_running -ne $true -or
-           !$status.PSObject.Properties['ready'] -or
-           $status.ready -ne $true){
-            return [pscustomobject]@{state='FAIL';detail='Configured tunnel is not running and ready.'}
-        }
-        if(!(Test-OwnedTunnel $InstallDirectory $Config $tunnel $status)){
-            return [pscustomobject]@{state='FAIL';detail='Running tunnel is not proven Companion-owned.'}
-        }
-        [pscustomobject]@{state='PASS';detail='Configured tunnel is running, ready, and bound to its exact ownership receipt.'}
-    } catch {
-        [pscustomobject]@{state='FAIL';detail='Tunnel ownership could not be verified.'}
-    }
+    [pscustomobject]@{state=if(@($results|Where-Object {$_.state -cne 'PASS'}).Count){'FAIL'}else{'PASS'};detail='Each enabled tunnel requires running, ready, healthy and exact ownership proof.';profiles=$results}
 }
-
 function Invoke-BrowserProbeProcess {
     param($Config,[string]$InstallDirectory)
     $probe=Join-Path $InstallDirectory 'BrowserProbe.mjs'

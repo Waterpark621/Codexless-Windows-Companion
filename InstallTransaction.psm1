@@ -428,6 +428,74 @@ function Test-TransactionInstalledRecordMatch($Actual,$Expected) {
    $Actual.rootDigest -ceq $Expected.rootDigest)
  } catch { $false }
 }
+function Invoke-OwnedTunnelProfilesCore([string]$Root,[hashtable]$Adapter,$Request) {
+ Assert-TransactionAdapter $Adapter
+ foreach($name in @('PrepareProfiles','ApplyProfiles','RecoverProfiles')){if(!$Adapter.ContainsKey($name) -or $Adapter[$name] -isnot [scriptblock]){throw 'TRANSACTION_PROFILE_ADAPTER_INVALID'}}
+ $owned=Get-OwnedInstall $Root $Adapter
+ $root=$owned.root;$record=$owned.record;$path=Join-Path $root 'incomplete-install.json'
+ $plan=& $Adapter.PrepareProfiles $record $Request
+ $settingsPath=Join-Path $root 'settings.json';$nativePath=Join-Path $root 'native-adapter-owner.json'
+ $settings=Get-TransactionRecordSnapshot $settingsPath;$native=Get-TransactionRecordSnapshot $nativePath
+ if($settings.sha256 -cne $plan.priorSettingsSha256 -or $native.sha256 -cne $plan.priorOwnerSha256){throw 'TUNNEL_PROFILE_STATE_CHANGED'}
+ $fence=[ordered]@{
+  version=1;operation='profiles';stage='committing';requiresVerifiedRecovery=$true
+  transactionId=[string]$record.transactionId;generationId=[string]$record.generationId;payloadSha256=[string]$record.payloadSha256
+  ownerDigest=[string]$record.ownerDigest;installOwnerSha256=$owned.ownerSnapshot.sha256
+  priorSettingsBytes=[Convert]::ToBase64String([IO.File]::ReadAllBytes($settingsPath));priorSettingsSha256=$settings.sha256
+  priorOwnerBytes=[Convert]::ToBase64String([IO.File]::ReadAllBytes($nativePath));priorOwnerSha256=$native.sha256
+  nextSettingsSha256=(Get-TransactionBytesDigest $plan.settingsBytes);nextOwnerSha256=(Get-TransactionBytesDigest $plan.ownerBytes)
+  newKeyFile=if($null -ne $plan.newKey){$plan.newKey.keyFile}else{$null}
+  newKeySha256=if($null -ne $plan.newKey){$plan.newKey.sha256}else{$null}
+ }
+ if((Get-TransactionBytesDigest ([Convert]::FromBase64String($fence.priorSettingsBytes))) -cne $settings.sha256 -or (Get-TransactionBytesDigest ([Convert]::FromBase64String($fence.priorOwnerBytes))) -cne $native.sha256){throw 'TUNNEL_PROFILE_STATE_CHANGED'}
+ if([Text.Encoding]::UTF8.GetByteCount(($fence|ConvertTo-Json -Depth 8 -Compress)) -gt 32768){throw 'TUNNEL_PROFILE_TRANSACTION_LIMIT'}
+ $null=Assert-TransactionRecordSnapshot $owned.ownerPath $owned.ownerSnapshot
+ $null=Assert-TransactionRecordSnapshot $settingsPath $settings
+ $null=Assert-TransactionRecordSnapshot $nativePath $native
+ Write-TransactionRecord $path $fence -CreateNew
+ try {
+  & $Adapter.ApplyProfiles $record $plan
+  Set-TransactionStage $fence $path 'verifying'
+  $null=Assert-TransactionRecordSnapshot $owned.ownerPath $owned.ownerSnapshot
+  & $Adapter.AssertTask $record
+  $snapshot=Get-TransactionRecordSnapshot $path
+  $null=Assert-TransactionRecordSnapshot $path $snapshot
+  Remove-Item -LiteralPath $path -ErrorAction Stop
+  [pscustomobject]@{state='configured';action=$plan.action;profileId=$plan.profileId;changed=$true;restartRequired=$true}
+ } catch {
+  $failure=$_
+  try {
+   $null=Assert-TransactionRecordSnapshot $owned.ownerPath $owned.ownerSnapshot
+   $live=Read-TransactionRecord $path
+   if(($live|ConvertTo-Json -Depth 8 -Compress) -cne ($fence|ConvertTo-Json -Depth 8 -Compress)){throw 'TUNNEL_PROFILE_STATE_CHANGED'}
+   & $Adapter.RecoverProfiles $record $live
+   Remove-Item -LiteralPath $path -ErrorAction Stop
+  } catch {throw 'TUNNEL_PROFILE_RECOVERY_REQUIRED: Evidence retained; run verified repair.'}
+  throw $failure
+ } finally {$plan=$null}
+}
+
+function Invoke-VerifiedProfileRecoveryCore([string]$Root,[hashtable]$Adapter,$Fence) {
+ $path=Join-Path $Root 'incomplete-install.json'
+ if(!$Adapter.ContainsKey('RecoverProfiles') -or $Fence.version -ne 1 -or $Fence.operation -cne 'profiles' -or $Fence.stage -cnotin @('committing','verifying') -or
+    $Fence.ownerDigest -cne (Get-TransactionOwnerDigest) -or $Fence.requiresVerifiedRecovery -ne $true){throw 'TRANSACTION_RECOVERY_EVIDENCE_INVALID'}
+ $ownerPath=Join-Path $Root 'install-owner.json'
+ $snapshot=Get-TransactionRecordSnapshot $ownerPath;$record=$snapshot.record
+ if($snapshot.sha256 -cne $Fence.installOwnerSha256 -or $record.transactionId -cne $Fence.transactionId -or $record.generationId -cne $Fence.generationId -or
+    $record.payloadSha256 -cne $Fence.payloadSha256 -or $record.state -cne 'installed' -or $record.ownerDigest -cne $Fence.ownerDigest -or
+    $record.rootDigest -cne (Get-TransactionBytesDigest ([Text.Encoding]::UTF8.GetBytes($Root.ToLowerInvariant())))){throw 'TRANSACTION_RECOVERY_EVIDENCE_INVALID'}
+ $generation=Join-Path (Join-Path $Root 'generations') $record.generationId
+ if((Get-TransactionTreeDigest $generation) -cne $record.payloadSha256 -or !(& $Adapter.VerifyStage $generation)){throw 'TRANSACTION_RECOVERY_EVIDENCE_INVALID'}
+ $fenceSnapshot=Get-TransactionRecordSnapshot $path
+ & $Adapter.RecoverProfiles $record $Fence
+ $null=Assert-TransactionRecordSnapshot $ownerPath $snapshot
+ $null=Assert-TransactionRecordSnapshot $path $fenceSnapshot
+ Remove-Item -LiteralPath $path -ErrorAction Stop
+ [pscustomobject]@{state='profile-change-rolled-back';changed=$true;restartRequired=$true}
+}
+
+function Invoke-OwnedTunnelProfiles {param([string]$Root,[hashtable]$Adapter,$Request) Invoke-TransactionLocked $Root {Invoke-OwnedTunnelProfilesCore $Root $Adapter $Request}}
+
 function Invoke-VerifiedIncompleteInstallRecoveryCore {
  param([string]$Root,[hashtable]$Adapter)
  Assert-TransactionAdapter $Adapter
@@ -435,6 +503,7 @@ function Invoke-VerifiedIncompleteInstallRecoveryCore {
  $fencePath=Join-Path $root 'incomplete-install.json'
  if(!(Test-Path -LiteralPath $fencePath -PathType Leaf)){throw 'TRANSACTION_RECOVERY_NOT_REQUIRED'}
  $fence=Read-TransactionRecord $fencePath
+ if($fence.operation -ceq 'profiles'){return (Invoke-VerifiedProfileRecoveryCore $root $Adapter $fence)}
  $allowed=@('fenced','promoting','registering','starting','verifying','finalizing')
  if($fence.version -ne 1 -or $fence.operation -cne 'install' -or
     $fence.ownerDigest -cne (Get-TransactionOwnerDigest) -or
@@ -535,4 +604,4 @@ function Invoke-OwnedRepair {param([string]$Root,[hashtable]$Adapter) Invoke-Tra
 function Invoke-OwnedUninstall {param([string]$Root,[hashtable]$Adapter) Invoke-TransactionLocked $Root {Invoke-OwnedUninstallCore $Root $Adapter}}
 function Invoke-OwnedUpdate {param([string]$Root,[string]$Payload,[hashtable]$Adapter) Invoke-TransactionLocked $Root {Invoke-OwnedUpdateCore $Root $Payload $Adapter}}
 function Invoke-VerifiedIncompleteInstallRecovery {param([string]$Root,[hashtable]$Adapter) Invoke-TransactionLocked $Root {Invoke-VerifiedIncompleteInstallRecoveryCore $Root $Adapter}}
-Export-ModuleMember -Function Invoke-InstallTransaction,Invoke-OwnedRepair,Invoke-OwnedUninstall,Invoke-OwnedUpdate,Invoke-VerifiedIncompleteInstallRecovery,Get-OwnedInstall,Get-TransactionTreeDigest
+Export-ModuleMember -Function Invoke-OwnedTunnelProfiles,Invoke-InstallTransaction,Invoke-OwnedRepair,Invoke-OwnedUninstall,Invoke-OwnedUpdate,Invoke-VerifiedIncompleteInstallRecovery,Get-OwnedInstall,Get-TransactionTreeDigest

@@ -165,6 +165,50 @@ function Assert-PathWithinRoot {
     $candidate
 }
 
+function ConvertTo-CompanionTunnelConfiguration($Settings,[string]$Root,[switch]$AllowMissingProfileDirectory) {
+    $items=@();$client=$null;$advanced=$Settings.PSObject.Properties['tunnels']
+    if($advanced){
+        if($Settings.PSObject.Properties['tunnel']){throw 'COMPANION_SETTINGS_INVALID: Mixed tunnel schemas.'}
+        if($Settings.tunnels -isnot [System.Array] -or @($Settings.tunnels).Count -gt 64){throw 'COMPANION_SETTINGS_INVALID: Tunnel collection must contain at most 64 profiles.'}
+        $items=@($Settings.tunnels)
+        if($Settings.PSObject.Properties['tunnelClient']){$client=$Settings.tunnelClient;foreach($property in $client.PSObject.Properties){if($property.Name -cnotin @('executable','profileDir')){throw 'COMPANION_SETTINGS_INVALID: Unsupported tunnel client field.'}}}
+    } elseif($Settings.PSObject.Properties['tunnel'] -and $null -ne $Settings.tunnel){
+        $legacy=$Settings.tunnel
+        if($legacy.PSObject.Properties['enabled'] -and $legacy.enabled -isnot [bool]){throw 'COMPANION_SETTINGS_INVALID: Tunnel enabled must be boolean.'}
+        if(!$legacy.PSObject.Properties['enabled'] -or $legacy.enabled){$items=@($legacy);$client=$legacy}
+    }
+    $exe=$null;$directory=$null
+    if($items.Count -or $null -ne $client){
+        $exe=Resolve-CompanionLocalPath ([string](Get-RequiredProperty $client 'executable' 'tunnel client executable')) 'tunnel client executable' File -MustExist
+        $relative=[string](Get-RequiredProperty $client 'profileDir' 'tunnel profile directory')
+        if([IO.Path]::IsPathRooted($relative)){$directory=Resolve-CompanionLocalPath $relative 'tunnel profile directory' Directory -MustExist}
+        else {$directory=Assert-PathWithinRoot $Root (Join-Path $Root $relative) 'tunnel profile directory';if(!$AllowMissingProfileDirectory -and !(Test-Path -LiteralPath $directory -PathType Container)){throw 'COMPANION_SETTINGS_INVALID: Tunnel profile directory missing.'}}
+    }
+    $ids=@{};$aliases=@{};$registrations=@{};$keys=@{};$profiles=@()
+    foreach($item in $items){
+        if($advanced){foreach($property in $item.PSObject.Properties){if($property.Name -cnotin @('profileId','alias','tunnelId','enabled','keyFile')){throw 'COMPANION_SETTINGS_INVALID: Unsupported tunnel profile field.'}}}
+        $alias=[string](Get-RequiredProperty $item 'alias' 'tunnel alias')
+        $registration=[string](Get-RequiredProperty $item 'tunnelId' 'tunnel ID')
+        $profileId=$alias
+        if($advanced){$profileId=[string](Get-RequiredProperty $item 'profileId' 'tunnel profile identity')}
+        $enabled=$true
+        if($item.PSObject.Properties['enabled']){if($item.enabled -isnot [bool]){throw 'COMPANION_SETTINGS_INVALID: Tunnel enabled must be boolean.'};$enabled=$item.enabled}
+        if($alias -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' -or [string]::IsNullOrWhiteSpace($registration) -or
+           $registration.Length -gt 128 -or $profileId -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' -or
+           ($advanced -and $registration -cnotmatch '^tunnel_[A-Za-z0-9_-]+$')){throw 'COMPANION_SETTINGS_INVALID: Tunnel profile identity is invalid.'}
+        $keyFile='keys\runtime-key.dpapi'
+        if($item.PSObject.Properties['keyFile']){$keyFile=[string]$item.keyFile}
+        if($keyFile -cnotmatch '^keys[\\/][A-Za-z0-9][A-Za-z0-9_.-]{0,127}\.dpapi$'){throw 'COMPANION_SETTINGS_INVALID: Tunnel credential must be a destination-local DPAPI file.'}
+        $keyPath=Assert-PathWithinRoot $Root (Join-Path $Root $keyFile) 'tunnel credential'
+        $cursor=$keyPath
+        while($cursor){if((Test-Path -LiteralPath $cursor) -and ((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'COMPANION_SETTINGS_INVALID: Credential reparse point.'};$cursor=Split-Path $cursor -Parent}
+        if($ids.ContainsKey($profileId) -or $aliases.ContainsKey($alias) -or $registrations.ContainsKey($registration) -or $keys.ContainsKey($keyPath)){throw 'COMPANION_SETTINGS_INVALID: Duplicate tunnel profile, alias, registration or credential binding.'}
+        $ids[$profileId]=$true;$aliases[$alias]=$true;$registrations[$registration]=$true;$keys[$keyPath]=$true
+        $profiles += [pscustomobject]@{profileId=$profileId;alias=$alias;tunnelId=$registration;enabled=$enabled;keyFile=$keyFile;keyPath=$keyPath}
+    }
+    [pscustomobject]@{tunnelExe=$exe;profileDir=$directory;tunnels=$profiles}
+}
+
 function Get-CompanionConfig {
     param([string]$CompanionRoot)
     $root=Resolve-CompanionLocalPath $CompanionRoot 'companion root' Directory -MustExist
@@ -201,32 +245,10 @@ function Get-CompanionConfig {
     }
 
     $release=Get-CodexlessReleaseIdentity $codexlessRoot
-    $tunnels=@()
-    $tunnelExe=$null
-    $profileDir=$null
-    if ($settings.PSObject.Properties['tunnel'] -and $null -ne $settings.tunnel) {
-        $tunnel=$settings.tunnel
-        $enabled=$true
-        if ($tunnel.PSObject.Properties['enabled']) { $enabled=[bool]$tunnel.enabled }
-        if ($enabled) {
-            $tunnelExe=Resolve-CompanionLocalPath ([string](Get-RequiredProperty $tunnel 'executable' 'tunnel.executable')) 'tunnel.executable' File -MustExist
-            $profileSetting=[string](Get-RequiredProperty $tunnel 'profileDir' 'tunnel.profileDir')
-            if([IO.Path]::IsPathRooted($profileSetting)){
-                $profileDir=Resolve-CompanionLocalPath $profileSetting 'tunnel.profileDir' Directory -MustExist
-            } else {
-                $profileDir=Assert-PathWithinRoot $root (Join-Path $root $profileSetting) 'tunnel.profileDir'
-                if(!(Test-Path -LiteralPath $profileDir -PathType Container)){throw 'COMPANION_SETTINGS_INVALID: tunnel.profileDir does not exist.'}
-            }
-            $alias=[string](Get-RequiredProperty $tunnel 'alias' 'tunnel.alias')
-            $tunnelId=[string](Get-RequiredProperty $tunnel 'tunnelId' 'tunnel.tunnelId')
-            if ($alias -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' -or [string]::IsNullOrWhiteSpace($tunnelId)) { throw 'COMPANION_SETTINGS_INVALID: Tunnel alias/id are invalid.' }
-            $keyFile='keys\runtime-key.dpapi'
-            if ($tunnel.PSObject.Properties['keyFile'] -and ![string]::IsNullOrWhiteSpace([string]$tunnel.keyFile)) { $keyFile=[string]$tunnel.keyFile }
-            if ([IO.Path]::IsPathRooted($keyFile)) { throw 'COMPANION_SETTINGS_INVALID: tunnel.keyFile must be relative to the Companion root.' }
-            $keyPath=Assert-PathWithinRoot $root (Join-Path $root $keyFile) 'tunnel.keyFile'
-            $tunnels=@([pscustomobject]@{alias=$alias;tunnelId=$tunnelId;keyFile=$keyFile;keyPath=$keyPath;enabled=$true})
-        }
-    }
+    $collection=ConvertTo-CompanionTunnelConfiguration $settings $root
+    $tunnels=@($collection.tunnels)
+    $tunnelExe=$collection.tunnelExe
+    $profileDir=$collection.profileDir
 
     $isolatedRuntimeProfile=$null
     if($settings.PSObject.Properties['isolatedRuntimeProfile']){
@@ -257,7 +279,7 @@ function Get-CompanionConfig {
 
 function Get-ConfiguredTunnels {
     param($Config,[switch]$IncludeDisabled)
-    @($Config.tunnels)
+    @($Config.tunnels | Where-Object {$IncludeDisabled -or !$_.PSObject.Properties['enabled'] -or $_.enabled})
 }
 
 function Get-PlainRuntimeKey {
@@ -265,7 +287,8 @@ function Get-PlainRuntimeKey {
     if ($null -eq $Tunnel -or [string]::IsNullOrWhiteSpace([string]$Tunnel.keyPath) -or !(Test-Path -LiteralPath $Tunnel.keyPath -PathType Leaf)) {
         throw 'TUNNEL_CREDENTIAL_MISSING: Run tunnel setup on this PC.'
     }
-    $secure=ConvertTo-SecureString ((Get-Content -LiteralPath $Tunnel.keyPath -Raw).Trim())
+    try {$secure=ConvertTo-SecureString ((Get-Content -LiteralPath $Tunnel.keyPath -Raw -ErrorAction Stop).Trim())}
+    catch {throw 'TUNNEL_CREDENTIAL_INVALID: Set a runtime API key on this PC.'}
     $ptr=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
     try { [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) }
     finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
@@ -387,10 +410,25 @@ function Connect-TunnelRuntimeCore {
     if(!(Test-Path -LiteralPath $context.intentPath -PathType Leaf)){throw 'TUNNEL_CONNECT_INTENT_REQUIRED'}
     try {
         $result=Invoke-TunnelNative $Config $Tunnel @('runtimes','connect','--alias',[string]$Tunnel.alias,'--profile',[string]$Tunnel.alias,'--profile-dir',$context.profileRoot,'--tunnel-id',[string]$Tunnel.tunnelId,'--runtime-api-key','env:CONTROL_PLANE_API_KEY','--mcp-server-url',[string]$Config.mcpUrl,'--json') 30000 $PlainKey
-        if(!$result.Ok){if($result.Code -ceq 'NATIVE_SECURITY_POLICY_UNSUPPORTED'){throw 'TUNNEL_SECURITY_POLICY_UNSUPPORTED: Windows refused the approved unsigned client. Do not bypass security controls.'};throw 'TUNNEL_CONNECT_UNCERTAIN: Generation is fenced; verify recovery before retry.'}
+        if(!(Test-TunnelConnectCompleted $result)){if($result.Code -ceq 'NATIVE_SECURITY_POLICY_UNSUPPORTED'){throw 'TUNNEL_SECURITY_POLICY_UNSUPPORTED: Windows refused the approved unsigned client. Do not bypass security controls.'};throw 'TUNNEL_CONNECT_UNCERTAIN: Generation is fenced; verify recovery before retry.'}
         $result.Stdout=$null
         $result
     } finally { $PlainKey=$null }
+}
+
+function Test-TunnelConnectCompleted($Evidence) {
+    if($null -eq $Evidence){return $false}
+    if($Evidence.Ok -is [bool] -and $Evidence.Ok){return $true}
+    # A nonzero CLI exit is not readiness. It can still supply an exact completed
+    # parent interval for a degraded child, verified separately by native receipt proof.
+    try {
+        if($Evidence.Code -cne 'NATIVE_EXIT_FAILED' -or $Evidence.ProcessId -le 0 -or $Evidence.ExitCode -eq 0 -or
+           $Evidence.LifetimeMayRemain -isnot [bool] -or $Evidence.LifetimeMayRemain -or
+           $Evidence.TimedOut -isnot [bool] -or $Evidence.TimedOut -or
+           $Evidence.OutputOverflow -isnot [bool] -or $Evidence.OutputOverflow -or
+           [string]$Evidence.CreatedAt -cnotmatch 'Z$' -or [string]$Evidence.ExitedAt -cnotmatch 'Z$'){return $false}
+        ([DateTimeOffset]::Parse($Evidence.ExitedAt) -ge [DateTimeOffset]::Parse($Evidence.CreatedAt))
+    } catch {$false}
 }
 
 function Invoke-TunnelNative($Config,$Tunnel,[string[]]$Arguments,[int]$TimeoutMs=5000,[string]$PlainKey,[string]$StateRoot,[IntPtr]$GuardHandle=[IntPtr]::Zero) {
@@ -420,4 +458,4 @@ function Write-CompanionLog {
     Add-Content -LiteralPath $path -Value "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $Message"
 }
 
-Export-ModuleMember -Function Get-CompanionConfig,Get-CodexlessReleaseIdentity,Get-ConfiguredTunnels,Get-PlainRuntimeKey,Test-TcpPort,Test-CodexlessReady,Get-CodexlessPrivateConsoleCommand,Get-TunnelRuntimeContext,Invoke-TunnelNative,Get-TunnelStatus,Test-TunnelReady,Connect-TunnelRuntime,Write-CompanionLog
+Export-ModuleMember -Function Test-TunnelConnectCompleted,ConvertTo-CompanionTunnelConfiguration,Get-CompanionConfig,Get-CodexlessReleaseIdentity,Get-ConfiguredTunnels,Get-PlainRuntimeKey,Test-TcpPort,Test-CodexlessReady,Get-CodexlessPrivateConsoleCommand,Get-TunnelRuntimeContext,Invoke-TunnelNative,Get-TunnelStatus,Test-TunnelReady,Connect-TunnelRuntime,Write-CompanionLog

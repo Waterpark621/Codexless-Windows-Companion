@@ -27,7 +27,7 @@ if ($transactionBound) {
     if (!(Test-Path -LiteralPath $ownerPath -PathType Leaf) -or (Get-Item -LiteralPath $ownerPath -Force).Length -gt 32768) { throw 'TASK_TRANSACTION_OWNER_MISSING' }
     try { $nativeOwner=Get-Content -LiteralPath $ownerPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop }
     catch { throw 'TASK_TRANSACTION_OWNER_INVALID' }
-    if ($nativeOwner.version -ne 1 -or $nativeOwner.state -cne 'active' -or $nativeOwner.transactionId -cne $TransactionId -or
+    if ($nativeOwner.version -notin @(1,2) -or $nativeOwner.state -cne 'active' -or $nativeOwner.transactionId -cne $TransactionId -or
         $nativeOwner.generationId -cne $GenerationId -or $nativeOwner.payloadSha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'TASK_TRANSACTION_OWNER_INVALID' }
     $definitionParameters.TransactionId=$TransactionId
     $definitionParameters.GenerationId=$GenerationId

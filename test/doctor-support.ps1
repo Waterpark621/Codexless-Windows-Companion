@@ -23,7 +23,7 @@ function Test([string]$name,[scriptblock]$body){& $body;$script:passed++;Write-O
   $script:listenerOk=$true
   $script:wrapperParent=101
   $script:tunnelOwned=$true
-  $script:tunnelStatus=[pscustomobject]@{process_running=$true;ready=$true}
+  $script:tunnelStatus=[pscustomobject]@{process_running=$true;ready=$true;healthy=$true}
   $script:browserResult=[pscustomobject]@{exitCode=0;output='{"ok":true,"browserStatus":"ok","chromeSkill":"ok","nodeRepl":"ok","supportedBackendCount":2,"selectionRequired":true}'}
   function script:Test-HouseholdOwnerIdentity { param($Receipt,$Process,$Definition) $null -ne $Process -and $Process.pid -eq 101 }
   function script:Test-PrivateConsoleReceipt { param($Receipt,$Identity,$CurrentUserSid) $null -ne $Identity -and $Identity.pid -eq 202 }

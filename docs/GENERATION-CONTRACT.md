@@ -6,4 +6,6 @@ Prior-boot recovery checks the contract before any retirement, on repeated evide
 
 Receipts lacking this contract are fenced. There is no automatic migration or retrospective certification of legacy evidence. Changed settings, release, project or Companion scripts require cooperative stop under the unchanged original configuration before replacing a generation; an ambiguous retained generation requires verified manual recovery. This does not provide an update transaction or make the preview installable.
 
-Secret contents and Browser state are excluded. Credential rotation does not gain ownership authority; tunnel identity, key location, exact process lifetime and existing receipts still govern ownership. Destination-local receipts are never publication material.
+Raw secret contents and Browser state are excluded. Each active profile's stable identity, alias, registration, enabled flag, credential path and encrypted DPAPI file digest participate in the in-memory canonical generation. Credential rotation therefore changes the generation digest without serializing a plaintext key. Rotation does not gain ownership authority; exact process lifetimes and receipts still govern ownership. Destination-local receipts are never publication material.
+
+Advanced profile edits require a clean cooperative stop and the existing verified transaction controller. A settings/credential change outside that path keeps retained evidence fenced. See [Multi-tunnel profiles](MULTI-TUNNEL-PROFILES.md).

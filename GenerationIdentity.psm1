@@ -20,7 +20,7 @@ function Get-CompanionGenerationContract($Config) {
         })
         if(!$files.Count){throw 'invalid'}
         $tunnels=@($Config.tunnels | Sort-Object alias | ForEach-Object {
-            [ordered]@{alias=[string]$_.alias;tunnelId=[string]$_.tunnelId;enabled=[bool]$_.enabled;keyPath=[string]$_.keyPath}
+            [ordered]@{profileId=if($_.PSObject.Properties['profileId']){[string]$_.profileId}else{[string]$_.alias};alias=[string]$_.alias;tunnelId=[string]$_.tunnelId;enabled=[bool]$_.enabled;keyPath=[string]$_.keyPath;credentialSha256=if(Test-Path -LiteralPath $_.keyPath -PathType Leaf){(Get-FileHash -LiteralPath $_.keyPath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()}else{'missing'}}
         })
         $canonical=[ordered]@{
             contractVersion=1

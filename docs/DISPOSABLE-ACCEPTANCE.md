@@ -27,3 +27,5 @@ Keep production source unchanged while native acceptance is running. Its install
 ## Remaining boundary
 
 Same-session Scheduler and two-process tests do not prove a separate Windows logon session. Genuine cross-session mutex behavior, different-user DPAPI, clean-machine Scheduler/security policy, Desktop close/reopen, reboot recovery and credentialed disposable backend acceptance remain second-machine work. The qualified public Codexless artifact and its exact publication metadata are still required before distribution acceptance. `friendInstallReady` remains false.
+
+The Advanced multi-tunnel acceptance case must provision three disposable remote tunnels on the destination using three independently supplied runtime keys, then verify all enabled profiles, one revoked key with two healthy siblings, add/remove/rotation, exact stop/start/restart bindings and prior-boot recovery. Local Remove must leave remote objects intact. Deterministic local profile tests are included in this candidate; credentialed multi-tunnel acceptance remains external. No source or acceptance artifact should contain a DPAPI file, runtime key, admin key or production identity.

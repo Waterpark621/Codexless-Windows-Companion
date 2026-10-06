@@ -137,26 +137,19 @@ function Test([string]$Name,[scriptblock]$Body) {
     }
     function script:Test-HouseholdOwnershipEvidence { param([string]$LauncherDirectory) $false }
     function script:Test-CodexlessReady { param($Config,[int]$TimeoutMs) $true }
+    function script:Get-ArtifactPolicy {param([string]$Artifact)
+        if($Artifact -ceq 'tunnel') {return [pscustomobject]@{executableSha256=$script:FixtureTunnelSha}}
+        [pscustomobject]@{executableSha256='2ffe3acc0458fdde999f50d11809bbe7c9b7ef204dcf17094e325d26ace101d8'}
+    }
+    function script:Test-TcpPort {param([int]$Port) $false}
     function script:Get-CompanionConfig {
         param([string]$CompanionRoot)
         $settings=Get-Content -LiteralPath (Join-Path $CompanionRoot 'settings.json') -Raw|ConvertFrom-Json
         $tunnels=@()
         $tunnelExeValue=$null
         $profile=$null
-        if($settings.tunnel.enabled -eq $true) {
-            $tunnelExeValue=[IO.Path]::GetFullPath([string]$settings.tunnel.executable)
-            if([IO.Path]::IsPathRooted([string]$settings.tunnel.profileDir)){
-                $profile=[IO.Path]::GetFullPath([string]$settings.tunnel.profileDir)
-            } else {
-                $profile=[IO.Path]::GetFullPath((Join-Path $CompanionRoot ([string]$settings.tunnel.profileDir)))
-            }
-            $keyPath=[IO.Path]::GetFullPath((Join-Path $CompanionRoot ([string]$settings.tunnel.keyFile)))
-            $tunnels=@([pscustomobject]@{
-                alias=[string]$settings.tunnel.alias
-                tunnelId=[string]$settings.tunnel.tunnelId
-                keyPath=$keyPath
-            })
-        }
+        $collection=ConvertTo-CompanionTunnelConfiguration $settings $CompanionRoot
+        $tunnelExeValue=$collection.tunnelExe;$profile=$collection.profileDir;$tunnels=@($collection.tunnels)
         [pscustomobject]@{
             companionRoot=[IO.Path]::GetFullPath($CompanionRoot)
             projectPath=[IO.Path]::GetFullPath([string]$settings.project.path)
@@ -172,16 +165,33 @@ function Test([string]$Name,[scriptblock]$Body) {
     }
 }
 
+& $nativeModule {param($hash) $script:FixtureTunnelSha=$hash} (Get-FileHash -LiteralPath $tunnelExe -Algorithm SHA256).Hash.ToLowerInvariant()
+function New-ProfileRequest([string]$Action,[string]$Id,[string]$Alias,[string]$Registration,[string]$Key) {
+    [pscustomobject]@{Action=$Action;ProfileId=$Id;Alias=$Alias;TunnelId=$Registration;Enabled=$true;TunnelClientExe=$tunnelExe;RuntimeKey=if($Key){ConvertTo-SecureString $Key -AsPlainText -Force}else{$null}}
+}
+function Read-Profiles {& $nativeModule {param($root) (Get-CompanionConfig $root).tunnels} $destination}
+function Assert-ProfileKey([string]$Id,[string]$Expected) {
+    $profile=@(Read-Profiles|Where-Object {$_.profileId -ceq $Id})
+    Assert ($profile.Count -eq 1) 'profile binding not unique'
+    $actual=& $nativeModule {param($tunnel) Get-PlainRuntimeKey $tunnel} $profile[0]
+    try {Assert ($actual -ceq $Expected) 'profile credential binding changed'}finally {$actual=$null}
+}
+
 try {
     $payload=Join-Path $fixture 'payload-v1'
     $candidate=Join-Path $fixture 'payload-v2'
     $badCandidate=Join-Path $fixture 'payload-v3'
+    $legacyCandidate=Join-Path $fixture 'payload-legacy'
     New-Payload $payload 'v1'
     New-Payload $candidate 'v2'
     New-Payload $badCandidate 'v3'
+    New-Payload $legacyCandidate 'legacy'
+    $legacyRuntime=Join-Path $legacyCandidate 'CompanionRuntime.psm1'
+    [IO.File]::WriteAllText($legacyRuntime,[IO.File]::ReadAllText($legacyRuntime).Replace('ConvertTo-CompanionTunnelConfiguration','LegacyTunnelConfiguration'),[Text.UTF8Encoding]::new($false))
     $d1=Get-TransactionTreeDigest $payload
     $d2=Get-TransactionTreeDigest $candidate
     $d3=Get-TransactionTreeDigest $badCandidate
+    $d4=Get-TransactionTreeDigest $legacyCandidate
 
     Test 'Adapter refuses mutation without transaction fence' {
         $root=Join-Path $fixture 'no-fence-destination'
@@ -206,8 +216,21 @@ try {
         & $nativeModule { $script:MockTaskXml=$null; $script:MockTaskState='Ready' }
     }
 
+    Test 'Zero-tunnel install can add its first independent local profile after install' {
+        $zeroRoot=Join-Path $fixture 'zero-destination'
+        $zeroAdapter=New-NativeTransactionAdapter -Root $zeroRoot -ProjectPath $project -CodexlessRoot $codexless -NodeExe $node -TrustedPayloadSha256 @($d1) -DisposableTaskName $taskName -ReadyTimeoutSeconds 1
+        $null=Invoke-InstallTransaction $zeroRoot $payload $zeroAdapter
+        & $nativeModule {$script:MockTaskState='Ready'}
+        $r=Invoke-OwnedTunnelProfiles $zeroRoot $zeroAdapter (New-ProfileRequest Add first first tunnel_first 'fixture-first-key')
+        Assert ($r.state -ceq 'configured')
+        $profiles=@(& $nativeModule {param($root) (Get-CompanionConfig $root).tunnels} $zeroRoot)
+        Assert ($profiles.Count -eq 1 -and $profiles[0].profileId -ceq 'first')
+        Assert ((& $nativeModule {param($tunnel) Get-PlainRuntimeKey $tunnel} $profiles[0]) -ceq 'fixture-first-key')
+        $null=Invoke-OwnedUninstall $zeroRoot $zeroAdapter
+        Assert (!(Test-Path -LiteralPath $profiles[0].keyPath))
+    }
     $destination=Join-Path $fixture 'destination'
-    $adapter=New-TestAdapter $destination @($d1,$d2,$d3)
+    $adapter=New-TestAdapter $destination @($d1,$d2,$d3,$d4)
     $adapterTrace=New-Object System.Collections.ArrayList
     foreach($opName in @('VerifyStage','AssertTask','VerifyStopped')) {
         $inner=$adapter[$opName]
@@ -229,7 +252,7 @@ try {
             }.GetNewClosure()
         } $inner $name $trace
     }
-    foreach($opName in @('Validate','Stop','Promote','Start','VerifyReady')) {
+    foreach($opName in @('Validate','RegisterTask','Stop','Promote','Start','VerifyReady')) {
         $inner=$adapter[$opName]
         $name=$opName
         $trace=$adapterTrace
@@ -282,10 +305,74 @@ try {
         }
     }
 
+    Test 'Profile edit refuses a running household before any settings or credential mutation' {
+        $before=Get-FileHash -LiteralPath (Join-Path $destination 'settings.json')
+        Refuses {Invoke-OwnedTunnelProfiles $destination $adapter (New-ProfileRequest Add second second tunnel_second 'fixture-second-key')} 'TUNNEL_PROFILES_REQUIRE_CLEAN_STOP'
+        Assert ((Get-FileHash -LiteralPath (Join-Path $destination 'settings.json')).Hash -ceq $before.Hash)
+        Assert (!(Test-Path -LiteralPath (Join-Path $destination 'incomplete-install.json')))
+    }
+    & $nativeModule {$script:MockTaskState='Ready'}
+    Test 'Add after install migrates the default into three independent DPAPI profiles' {
+        $null=Invoke-OwnedTunnelProfiles $destination $adapter (New-ProfileRequest Add second second tunnel_second 'fixture-second-key')
+        $null=Invoke-OwnedTunnelProfiles $destination $adapter (New-ProfileRequest Add Third_Profile Third_Profile tunnel_third 'fixture-Third_Profile-key')
+        Assert (@(Read-Profiles).Count -eq 3)
+        Assert-ProfileKey fixture $runtimeKeyText;Assert-ProfileKey second 'fixture-second-key';Assert-ProfileKey Third_Profile 'fixture-Third_Profile-key'
+        Assert (@(Read-Profiles|Select-Object -ExpandProperty keyPath -Unique).Count -eq 3)
+        $settings=Get-Content -LiteralPath (Join-Path $destination 'settings.json') -Raw|ConvertFrom-Json
+        Assert (!$settings.PSObject.Properties['tunnel']) 'legacy and Advanced schemas mixed'
+        Assert (@($settings.tunnels|Select-Object -ExpandProperty profileId -Unique).Count -eq 3)
+    }
+    Test 'Duplicate profile alias and remote identity all refuse without leaving a transaction fence' {
+        foreach($request in @((New-ProfileRequest Add second fourth tunnel_fourth 'fixture-key'),(New-ProfileRequest Add fourth second tunnel_fourth 'fixture-key'),(New-ProfileRequest Add fourth fourth tunnel_second 'fixture-key'))){
+            $failed=$false;try {Invoke-OwnedTunnelProfiles $destination $adapter $request|Out-Null}catch {$failed=$true}
+            Assert $failed;Assert (!(Test-Path -LiteralPath (Join-Path $destination 'incomplete-install.json')))
+        }
+        Assert (@(Read-Profiles).Count -eq 3)
+    }
+    Test 'Rotate one runtime key preserves stable identities and every other credential' {
+        $before=@(Read-Profiles);$second=($before|Where-Object {$_.profileId -ceq 'second'})
+        $null=Invoke-OwnedTunnelProfiles $destination $adapter (New-ProfileRequest RotateKey second '' '' 'fixture-second-rotated')
+        Assert-ProfileKey fixture $runtimeKeyText;Assert-ProfileKey second 'fixture-second-rotated';Assert-ProfileKey Third_Profile 'fixture-Third_Profile-key'
+        $after=(Read-Profiles|Where-Object {$_.profileId -ceq 'second'})
+        Assert ($after.keyPath -ine $second.keyPath -and $after.alias -ceq $second.alias -and $after.tunnelId -ceq $second.tunnelId)
+        foreach($id in @('fixture','Third_Profile')){Assert ((Read-Profiles|Where-Object {$_.profileId -ceq $id}).keyPath -ceq ($before|Where-Object {$_.profileId -ceq $id}).keyPath)}
+    }
+    Test 'Local Remove does not touch sibling keys or invoke remote tunnel CRUD' {
+        $Third_Profile=(Read-Profiles|Where-Object {$_.profileId -ceq 'Third_Profile'});$before=(Get-FileHash -LiteralPath $Third_Profile.keyPath).Hash
+        $null=Invoke-OwnedTunnelProfiles $destination $adapter (New-ProfileRequest Remove second '' '' '')
+        Assert (@(Read-Profiles).Count -eq 2);Assert-ProfileKey fixture $runtimeKeyText;Assert-ProfileKey Third_Profile 'fixture-Third_Profile-key'
+        Assert ((Get-FileHash -LiteralPath $Third_Profile.keyPath).Hash -ceq $before)
+        Refuses {Invoke-OwnedTunnelProfiles $destination $adapter (New-ProfileRequest Remove second '' '' '')} 'TUNNEL_PROFILE_NOT_FOUND'
+    }
+    Test 'Interrupted profile commit recovers through existing verified repair and restores bindings' {
+        $old=[IO.File]::ReadAllBytes((Join-Path $destination 'settings.json'))
+        $apply=$adapter.ApplyProfiles;$recover=$adapter.RecoverProfiles
+        $adapter.ApplyProfiles={param($record,$plan) & $apply $record $plan;throw 'fixture interrupted after commit'}.GetNewClosure()
+        $adapter.RecoverProfiles={param($record,$fence) throw 'fixture controller interrupted'}.GetNewClosure()
+        try {
+            Refuses {Invoke-OwnedTunnelProfiles $destination $adapter (New-ProfileRequest RotateKey Third_Profile '' '' 'fixture-interrupted-key')} 'TUNNEL_PROFILE_RECOVERY_REQUIRED'
+            Assert (Test-Path -LiteralPath (Join-Path $destination 'incomplete-install.json'))
+        } finally {$adapter.ApplyProfiles=$apply;$adapter.RecoverProfiles=$recover}
+        $r=Invoke-OwnedRepair $destination $adapter
+        Assert ($r.state -ceq 'profile-change-rolled-back')
+        Assert ([Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $destination 'settings.json'))) -ceq [Convert]::ToBase64String($old))
+        Assert-ProfileKey Third_Profile 'fixture-Third_Profile-key';Assert-ProfileKey fixture $runtimeKeyText
+    }
+    Test 'Malformed key rejects before a profile transaction begins' {
+        Refuses {Invoke-OwnedTunnelProfiles $destination $adapter (New-ProfileRequest RotateKey Third_Profile '' '' '')} 'TUNNEL_PROFILE_RUNTIME_KEY_REQUIRED'
+        Assert (!(Test-Path -LiteralPath (Join-Path $destination 'incomplete-install.json')))
+    }
+    Test 'Profile output and persistent settings receipts contain no plaintext runtime key' {
+        foreach($path in @((Join-Path $destination 'settings.json'),(Join-Path $destination 'native-adapter-owner.json'))){
+            $raw=[IO.File]::ReadAllText($path)
+            foreach($needle in @($runtimeKeyText,'fixture-second-key','fixture-Third_Profile-key','fixture-second-rotated','fixture-interrupted-key')){Assert (!$raw.Contains($needle)) 'plaintext leaked'}
+        }
+    }
     Test 'Repair uses exact owned task and generation' {
         $result=Invoke-OwnedRepair $destination $adapter
         Assert ($result.state -ceq 'repaired' -and $result.verified) 'repair did not verify'
         Assert ((& $nativeModule { $script:MockTaskState }) -ceq 'Running') 'repair did not restart owned task'
+        Assert-ProfileKey fixture $runtimeKeyText;Assert-ProfileKey Third_Profile 'fixture-Third_Profile-key'
     }
 
     Test 'Foreign settings mutation refuses before repair stop' {
@@ -302,6 +389,14 @@ try {
         }
     }
 
+    Test 'Multi-profile install refuses an older single-tunnel payload before stopping or fencing' {
+        $before=& $nativeModule {$script:MockTaskState}
+        $failed=$false;try {Invoke-OwnedUpdate $destination $legacyCandidate $adapter|Out-Null}catch{$failed=$true}
+        Assert $failed
+        Assert ((& $nativeModule {$script:MockTaskState}) -ceq $before)
+        Assert (!(Test-Path -LiteralPath (Join-Path $destination 'incomplete-install.json')))
+        Assert-ProfileKey fixture $runtimeKeyText;Assert-ProfileKey Third_Profile 'fixture-Third_Profile-key'
+    }
     Test 'Update promotes exact candidate task generation' {
         $prior=(Get-Content -LiteralPath (Join-Path $destination 'install-owner.json') -Raw|ConvertFrom-Json).generationId
         $adapterTrace.Clear()
@@ -310,6 +405,7 @@ try {
         Assert ($result.state -ceq 'updated' -and $result.verified) 'candidate update failed'
         $current=Get-Content -LiteralPath (Join-Path $destination 'install-owner.json') -Raw|ConvertFrom-Json
         Assert ($current.generationId -cne $prior -and $current.payloadSha256 -ceq $d2) 'candidate receipt not promoted'
+        Assert-ProfileKey fixture $runtimeKeyText;Assert-ProfileKey Third_Profile 'fixture-Third_Profile-key'
         $xml=& $nativeModule { $script:MockTaskXml }
         $bindingText="transaction=$($current.transactionId); generation=$($current.generationId)"
         Assert ($xml -match [regex]::Escape($bindingText)) 'candidate task description binding wrong'
@@ -326,6 +422,7 @@ try {
             Assert ($after.generationId -ceq $before.generationId -and $after.payloadSha256 -ceq $before.payloadSha256) 'rollback did not restore exact prior receipt'
             $native=Get-Content -LiteralPath (Join-Path $destination 'native-adapter-owner.json') -Raw|ConvertFrom-Json
             Assert ($native.generationId -ceq $before.generationId) 'rollback did not restore native task attribution'
+            Assert-ProfileKey fixture $runtimeKeyText;Assert-ProfileKey Third_Profile 'fixture-Third_Profile-key'
             Assert (!(Test-Path -LiteralPath (Join-Path $destination 'incomplete-install.json'))) 'verified rollback retained fence'
         } finally {
             & $nativeModule { $script:FailNonInitialGeneration=$false;$script:InitialGeneration=$null }

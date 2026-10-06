@@ -218,4 +218,34 @@ Test 'Recovery source has no force kill, stop, connect, adoption, or Scheduler m
 }
 foreach($field in @('generationSha256','executableSha256','namespaceDigest')){Test "Prior-boot tunnel $field mismatch remains fenced" {New-Fixture;$v=Load 'tunnel-owners\fixture.json';$v.$field='0'*64;Save 'tunnel-owners\fixture.json' $v;Refuses}}
 Test 'Missing prior-boot tunnel connect interval remains fenced' {New-Fixture;$v=Load 'tunnel-owners\fixture.json';$v.PSObject.Properties.Remove('connectExitedAt');Save 'tunnel-owners\fixture.json' $v;Refuses}
+function New-MultiFixture {
+    New-Fixture
+    $base=Load 'tunnel-owners\fixture.json'
+    $fixtureCfg.tunnels += [pscustomobject]@{profileId='second';alias='second';tunnelId='tunnel_second';enabled=$true;keyPath=(Join-Path $def.LauncherDirectory 'keys\second.dpapi')}
+    $fixtureCfg.tunnels += [pscustomobject]@{profileId='third';alias='third';tunnelId='tunnel_third';enabled=$true;keyPath=(Join-Path $def.LauncherDirectory 'keys\third.dpapi')}
+    $owner.generationContract=Get-CompanionGenerationContract $fixtureCfg;Save 'task-owner.json' $owner
+    $index=0
+    foreach($tunnel in $fixtureCfg.tunnels){
+        $receipt=$base|ConvertTo-Json -Depth 8|ConvertFrom-Json
+        $context=Get-TunnelRuntimeContext $fixtureCfg $tunnel
+        $sha=[Security.Cryptography.SHA256]::Create()
+        try {
+            $receipt.namespaceDigest=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($context.stateRoot)))).Replace('-','').ToLowerInvariant()
+            $receipt.registrationDigest=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($tunnel.tunnelId)))).Replace('-','').ToLowerInvariant()
+        } finally {$sha.Dispose()}
+        $receipt.pid=103+$index*10;$receipt.connectPid=104+$index*10;$receipt.alias=$tunnel.alias;$receipt.generationSha256=$owner.generationContract.sha256
+        Save ('tunnel-owners\'+$tunnel.alias+'.json') $receipt;$index++
+    }
+    & $module {function script:Get-RecoveryTunnelStatus {param($Config,$Tunnel) [pscustomobject]@{alias=$Tunnel.alias;tunnel_id=$Tunnel.tunnelId;process_running=$false}}}
+}
+Test 'Three independent prior-boot tunnel receipts recover only when every lifetime is absent' {
+    New-MultiFixture;Invoke-PriorBootOwnership $def
+    Assert (!(Test-HouseholdOwnershipEvidence $def.LauncherDirectory));Assert ((Load 'prior-boot-recovery.json').receiptCount -eq 7)
+}
+Test 'Changed collection remains fenced with all original multi-tunnel receipts intact' {
+    New-MultiFixture;$fixtureCfg.tunnels=@($fixtureCfg.tunnels|Where-Object {$_.alias -cne 'third'});Refuses
+}
+Test 'PID reuse in any one of multiple profiles prevents ownership recovery' {
+    New-MultiFixture;& $module {$script:processes += [pscustomobject]@{ProcessId=123;Name='foreign.exe';CommandLine='unrelated PID reuse'}};Refuses
+}
 Write-Output ("RESULT: {0}/{0} PASS; fixture receipt I/O only; native observations mocked; no live deployment/task/tunnel actions" -f $passed)

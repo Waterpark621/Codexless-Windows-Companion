@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$CandidateRoot,[string]$ReportPath,[string]$FixtureBase)
+param([Parameter(Mandatory=$true)][string]$CandidateRoot,[string]$ReportPath,[string]$FixtureBase,[string]$QualifiedTunnelExe)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -60,6 +60,16 @@ function Definition {
  New-HouseholdTaskDefinition -UserSid $sid -LauncherDirectory $root -HostScript (Join-Path (Join-Path (Join-Path $root 'generations') $owner.generationId) 'Task-Host.ps1') -PowerShellExe $exe -TaskName $taskName -TransactionId $owner.transactionId -GenerationId $owner.generationId
 }
 function Lifecycle([string]$Action){$def=Definition;Invoke-HouseholdLifecycle $Action $def (New-WindowsTaskAdapter $def) -TimeoutSeconds 100}
+function Profiles([string]$Action,[string]$Id) {
+ $owned=Get-OwnedInstall $root $adapter
+ $args=@{Root=$root;Action=$Action;DisposableTaskName=$taskName}
+ if($Id){$args.ProfileId=$Id}
+ if($Action -ceq 'Add'){
+  $args.Alias=$Id;$args.TunnelId='tunnel_fixture_'+$Id;$args.TunnelClientExe=$QualifiedTunnelExe;$args.Disabled=$true
+ }
+ if($Action -in @('Add','RotateKey')){$args.RuntimeApiKey=ConvertTo-SecureString ('fixture-native-profile-'+$Id+'-'+$Action) -AsPlainText -Force}
+ & (Join-Path $owned.generation 'Tunnels.ps1') @args
+}
 $failure=$false
 try{
  Case 'qualified_local_candidate_identity' {$identity=Get-CodexlessReleaseIdentity $CandidateRoot;Assert ($identity.manifestSha256 -ceq '14583de39b1218ff44477b62519f7cc6351ec7c33259cf24c334ef0ed5cccb9d')}
@@ -73,6 +83,40 @@ try{
  Case 'duplicate_start' {$r=Lifecycle Start;Assert ($r.state -ceq 'already-running')}
  Case 'status_and_readiness' {$s=Lifecycle Status;Assert ($s.ownerVerified -and $s.piecesVerified -and $s.listenerPresent -and !$s.cleanupRequired);Assert (Test-CodexlessReady (Get-CompanionConfig $root))}
  Case 'stop' {$r=Lifecycle Stop;Assert ($r.state -ceq 'stopped');Assert (!(Test-TcpPort $port))}
+ if($QualifiedTunnelExe){
+  # Profiles are disabled throughout native acceptance. Synthetic local keys are
+  # never used for remote connect; official status uses only isolated local state.
+  Case 'advanced_add_three_disabled_profiles_through_installed_cli' {
+   foreach($id in @('alpha','beta','gamma')){$r=Profiles Add $id;Assert ($r.state -ceq 'configured')}
+   $profiles=@(Profiles List '');Assert ($profiles.Count -eq 3 -and @($profiles|Where-Object enabled).Count -eq 0)
+   foreach($profile in $profiles){Assert ($profile.PSObject.Properties.Name -notcontains 'keyPath')}
+  }
+  Case 'advanced_independent_readonly_status_projection' {
+   $profiles=@(Profiles Status '');Assert ($profiles.Count -eq 3)
+   Assert (@($profiles|Where-Object {$_.alive -or $_.owned -or $_.ready}).Count -eq 0)
+   Assert (($profiles|ConvertTo-Json) -notmatch 'fixture-native-profile|ciphertext|keyFile|keyPath')
+  }
+  Case 'advanced_rotation_and_local_remove_preserve_sibling_binding' {
+   $before=(Get-CompanionConfig $root).tunnels;$alpha=($before|Where-Object profileId -eq alpha)
+   $null=Profiles RotateKey beta;$null=Profiles Remove gamma
+   $profiles=(Get-CompanionConfig $root).tunnels;Assert ($profiles.Count -eq 2)
+   Assert (($profiles|Where-Object profileId -eq alpha).keyPath -ceq $alpha.keyPath)
+   $key=Get-PlainRuntimeKey ($profiles|Where-Object profileId -eq beta)
+   try{Assert ($key -ceq 'fixture-native-profile-beta-RotateKey')}finally{$key=$null}
+  }
+  Case 'advanced_disabled_collection_clean_start_restart_stop_binding' {
+   $before=(Get-CompanionConfig $root).tunnels|ConvertTo-Json -Depth 4 -Compress
+   $null=Lifecycle Start;$state=Lifecycle Status
+   Assert ($state.ownerVerified -and $state.piecesVerified -and $state.listenerPresent -and !$state.cleanupRequired)
+   $null=Lifecycle Restart;$null=Lifecycle Stop
+   Assert (!(Test-HouseholdOwnershipEvidence $root) -and !(Test-TcpPort $port))
+   Assert (((Get-CompanionConfig $root).tunnels|ConvertTo-Json -Depth 4 -Compress) -ceq $before)
+  }
+  Case 'advanced_remove_remaining_profiles_restores_zero_active_tunnels' {
+   $null=Profiles Remove alpha;$null=Profiles Remove beta
+   Assert (@((Get-CompanionConfig $root).tunnels).Count -eq 0)
+  }
+ }
  Case 'foreign_listener_refusal' {
   $foreignListener=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,$port)
   try{$foreignListener.Start();Refuses {Lifecycle Start} 'HOUSEHOLD_MIGRATION_REQUIRED'}finally{$foreignListener.Stop()}

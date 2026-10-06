@@ -114,6 +114,16 @@ function Test-NativeVerifiedStage($Binding,[string]$Path) {
         $full=Resolve-NativeAdapterPath $Path 'payload stage' Directory -MustExist
         Assert-NativePayloadShape $full
         $digest=Get-TransactionTreeDigest $full
+        $settingsPath=Join-Path $Binding.Root 'settings.json'
+        if(Test-Path -LiteralPath $settingsPath){
+            $settings=Read-NativeJson $settingsPath
+            if($settings.PSObject.Properties['tunnels']){
+                $tokens=$null;$errors=$null
+                $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $full 'CompanionRuntime.psm1'),[ref]$tokens,[ref]$errors)
+                $capability=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'ConvertTo-CompanionTunnelConfiguration'},$false))
+                if($errors.Count -or $capability.Count -ne 1){return $false}
+            }
+        }
         return ($Binding.TrustedPayloadSha256 -ccontains $digest)
     } catch { return $false }
 }
@@ -167,7 +177,7 @@ function Get-NativeTask($Binding) {
     }
 }
 
-function Assert-NativeConfig($Binding) {
+function Assert-NativeConfig($Binding,[switch]$Initial) {
     $cfg=Get-CompanionConfig $Binding.Root
     if ($cfg.companionRoot -ine $Binding.Root -or
         $cfg.projectPath -ine $Binding.ProjectPath -or
@@ -175,35 +185,56 @@ function Assert-NativeConfig($Binding) {
         $cfg.nodeExe -ine $Binding.NodeExe -or
         $cfg.nodeSha256 -cne $Binding.NodeSha256 -or
         [int]$cfg.port -ne $Binding.Port) { throw 'NATIVE_ADAPTER_SETTINGS_MISMATCH' }
-    if ($Binding.TunnelEnabled) {
-        if (@($cfg.tunnels).Count -ne 1 -or
-            $cfg.tunnelExe -ine $Binding.TunnelClientExe -or
-            $cfg.profileDir -ine (Join-Path $Binding.Root 'tunnel-profile') -or
-            $cfg.tunnels[0].alias -cne $Binding.TunnelAlias -or
-            $cfg.tunnels[0].tunnelId -cne $Binding.TunnelId -or
-            $cfg.tunnels[0].keyPath -ine (Join-Path $Binding.Root 'keys\runtime-key.dpapi')) {
-            throw 'NATIVE_ADAPTER_SETTINGS_MISMATCH'
-        }
-        try { $null=ConvertTo-SecureString ((Get-Content -LiteralPath $cfg.tunnels[0].keyPath -Raw -ErrorAction Stop).Trim()) }
-        catch { throw 'NATIVE_ADAPTER_CREDENTIAL_INVALID' }
-    } elseif (@($cfg.tunnels).Count -ne 0) {
-        throw 'NATIVE_ADAPTER_SETTINGS_MISMATCH'
+    if($Initial){
+        if($Binding.TunnelEnabled){
+            if(@($cfg.tunnels).Count -ne 1 -or $cfg.tunnelExe -ine $Binding.TunnelClientExe -or
+               $cfg.tunnels[0].alias -cne $Binding.TunnelAlias -or $cfg.tunnels[0].tunnelId -cne $Binding.TunnelId -or
+               $cfg.tunnels[0].keyPath -ine (Join-Path $Binding.Root 'keys\runtime-key.dpapi')){throw 'NATIVE_ADAPTER_SETTINGS_MISMATCH'}
+        } elseif(@($cfg.tunnels).Count){throw 'NATIVE_ADAPTER_SETTINGS_MISMATCH'}
+    }
+    foreach($tunnel in @($cfg.tunnels)) {
+        if($cfg.profileDir -ine (Join-Path $Binding.Root 'tunnel-profile')){throw 'NATIVE_ADAPTER_SETTINGS_MISMATCH'}
+        $null=Resolve-NativeAdapterPath $tunnel.keyPath 'credential' File -MustExist
+        try {$null=ConvertTo-SecureString ((Get-Content -LiteralPath $tunnel.keyPath -Raw -ErrorAction Stop).Trim())}
+        catch {throw 'NATIVE_ADAPTER_CREDENTIAL_INVALID'}
     }
     $cfg
 }
 
+function Get-NativeCredentialInventory($Binding,$Receipt) {
+    $entries=@()
+    if($null -ne $Receipt){
+        if($Receipt.version -eq 1){if($null -ne $Receipt.credentialSha256){$entries=@([pscustomobject]@{keyFile='keys\runtime-key.dpapi';sha256=[string]$Receipt.credentialSha256})}}
+        elseif($Receipt.version -eq 2 -and $Receipt.credentialFiles -is [System.Array]){$entries=@($Receipt.credentialFiles)}
+        else {throw 'NATIVE_ADAPTER_OWNER_MISMATCH'}
+    }
+    if($entries.Count -gt 128){throw 'TUNNEL_PROFILE_CREDENTIAL_LIMIT'}
+    $seen=@{}
+    foreach($entry in $entries){
+        if([string]$entry.keyFile -cnotmatch '^keys[\\/][A-Za-z0-9][A-Za-z0-9_.-]{0,127}\.dpapi$' -or [string]$entry.sha256 -cnotmatch '^[0-9a-f]{64}$'){throw 'NATIVE_ADAPTER_FOREIGN_STATE'}
+        $path=Resolve-NativeAdapterPath (Join-Path $Binding.Root $entry.keyFile) 'credential' File -MustExist
+        if($seen.ContainsKey($path) -or (Get-NativeFileSha256 $path) -cne $entry.sha256){throw 'NATIVE_ADAPTER_FOREIGN_STATE'}
+        $seen[$path]=$true
+    }
+    $entries
+}
+
 function New-NativeOwnerReceipt($Binding,$Record) {
-    $settings=Join-Path $Binding.Root 'settings.json'
-    $key=Join-Path $Binding.Root 'keys\runtime-key.dpapi'
+    $entries=@();$path=Join-Path $Binding.Root 'native-adapter-owner.json'
+    $cfg=Assert-NativeConfig $Binding -Initial:(!(Test-Path -LiteralPath $path))
+    if(Test-Path -LiteralPath $path){$entries=@(Get-NativeCredentialInventory $Binding (Read-NativeJson $path))}
+    foreach($tunnel in @($cfg.tunnels)){
+        if(!@($entries|Where-Object {([IO.Path]::GetFullPath((Join-Path $Binding.Root $_.keyFile))) -ieq $tunnel.keyPath}).Count){
+            $relative=$tunnel.keyPath.Substring($Binding.Root.TrimEnd('\').Length+1)
+            $entries += [pscustomobject]@{keyFile=$relative;sha256=(Get-NativeFileSha256 $tunnel.keyPath)}
+        }
+    }
     [ordered]@{
-        version=1
-        state='active'
-        transactionId=[string]$Record.transactionId
-        generationId=[string]$Record.generationId
-        payloadSha256=[string]$Record.payloadSha256
+        version=2;state='active'
+        transactionId=[string]$Record.transactionId;generationId=[string]$Record.generationId;payloadSha256=[string]$Record.payloadSha256
         nodeSha256=[string]$Binding.NodeSha256
-        settingsSha256=(Get-NativeFileSha256 $settings)
-        credentialSha256=if($Binding.TunnelEnabled){Get-NativeFileSha256 $key}else{$null}
+        settingsSha256=(Get-NativeFileSha256 (Join-Path $Binding.Root 'settings.json'))
+        credentialFiles=@($entries)
         taskNameSha256=(Get-NativeStringSha256 $Binding.TaskName)
         taskBindingSha256=(Get-NativeStringSha256 (([string]$Record.transactionId)+'/'+([string]$Record.generationId)))
     }
@@ -217,7 +248,7 @@ function Assert-NativeOwnedState($Binding,$Record) {
     if ($Binding.TrustedPayloadSha256 -cnotcontains [string]$Record.payloadSha256) { throw 'NATIVE_ADAPTER_PAYLOAD_UNTRUSTED' }
 
     $receipt=Read-NativeJson (Join-Path $Binding.Root 'native-adapter-owner.json')
-    if ($receipt.version -ne 1 -or $receipt.state -cne 'active' -or
+    if ($receipt.version -notin @(1,2) -or $receipt.state -cne 'active' -or
         $receipt.transactionId -cne $Record.transactionId -or
         $receipt.generationId -cne $Record.generationId -or
         $receipt.payloadSha256 -cne $Record.payloadSha256 -or
@@ -232,15 +263,11 @@ function Assert-NativeOwnedState($Binding,$Record) {
     if (!(Test-Path -LiteralPath $settings -PathType Leaf) -or
         (Get-NativeFileSha256 $settings) -cne $receipt.settingsSha256) { throw 'NATIVE_ADAPTER_FOREIGN_STATE' }
 
-    $key=Join-Path $Binding.Root 'keys\runtime-key.dpapi'
-    if ($Binding.TunnelEnabled) {
-        if ($receipt.credentialSha256 -cnotmatch '^[0-9a-f]{64}$' -or
-            !(Test-Path -LiteralPath $key -PathType Leaf) -or
-            (Get-NativeFileSha256 $key) -cne $receipt.credentialSha256) { throw 'NATIVE_ADAPTER_FOREIGN_STATE' }
-    } elseif ($null -ne $receipt.credentialSha256 -or (Test-Path -LiteralPath $key)) {
-        throw 'NATIVE_ADAPTER_FOREIGN_STATE'
+    $entries=@(Get-NativeCredentialInventory $Binding $receipt)
+    $cfg=Assert-NativeConfig $Binding
+    foreach($tunnel in @($cfg.tunnels)){
+        if(@($entries|Where-Object {([IO.Path]::GetFullPath((Join-Path $Binding.Root $_.keyFile))) -ieq $tunnel.keyPath}).Count -ne 1){throw 'NATIVE_ADAPTER_FOREIGN_STATE'}
     }
-    $null=Assert-NativeConfig $Binding
     $receipt
 }
 
@@ -323,11 +350,10 @@ function Test-NativeStopped($Binding,$Record) {
 function Remove-NativeOwnedState($Binding,$Record) {
     $receipt=Assert-NativeOwnedState $Binding $Record
     $settings=Join-Path $Binding.Root 'settings.json'
-    $key=Join-Path $Binding.Root 'keys\runtime-key.dpapi'
+    $entries=@(Get-NativeCredentialInventory $Binding $receipt)
     $stop=Join-Path $Binding.Root 'stop.flag'
 
     if ((Get-NativeFileSha256 $settings) -cne $receipt.settingsSha256) { throw 'NATIVE_ADAPTER_FOREIGN_STATE' }
-    if ($Binding.TunnelEnabled -and (Get-NativeFileSha256 $key) -cne $receipt.credentialSha256) { throw 'NATIVE_ADAPTER_FOREIGN_STATE' }
     if (Test-Path -LiteralPath $stop) {
         $stopItem=Get-Item -LiteralPath $stop -Force
         if ($stopItem.Attributes -band [IO.FileAttributes]::ReparsePoint -or $stopItem.Length -ne 0) {
@@ -336,7 +362,7 @@ function Remove-NativeOwnedState($Binding,$Record) {
     }
 
     Remove-Item -LiteralPath $settings -ErrorAction Stop
-    if ($Binding.TunnelEnabled) { Remove-Item -LiteralPath $key -ErrorAction Stop }
+    foreach($entry in $entries){Remove-Item -LiteralPath (Join-Path $Binding.Root $entry.keyFile) -ErrorAction Stop}
     if (Test-Path -LiteralPath $stop) { Remove-Item -LiteralPath $stop -ErrorAction Stop }
     foreach ($directory in @((Join-Path $Binding.Root 'keys'),(Join-Path $Binding.Root 'tunnel-profile'))) {
         if ((Test-Path -LiteralPath $directory -PathType Container) -and
@@ -345,6 +371,125 @@ function Remove-NativeOwnedState($Binding,$Record) {
         }
     }
     Remove-Item -LiteralPath (Join-Path $Binding.Root 'native-adapter-owner.json') -ErrorAction Stop
+}
+
+function Write-NativeProfileBytes([string]$Path,[byte[]]$Bytes) {
+    $null=Resolve-NativeAdapterPath $Path 'profile state'
+    $temp=$Path+'.'+[Guid]::NewGuid().ToString('N')+'.pending'
+    $stream=$null
+    try {
+        $stream=[IO.File]::Open($temp,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+        $stream.Write($Bytes,0,$Bytes.Length);$stream.Flush($true);$stream.Dispose();$stream=$null
+        if(Test-Path -LiteralPath $Path){[IO.File]::Replace($temp,$Path,[NullString]::Value)}else{[IO.File]::Move($temp,$Path)}
+    } finally {if($stream){$stream.Dispose()};if(Test-Path -LiteralPath $temp){Remove-Item -LiteralPath $temp -ErrorAction Stop}}
+}
+
+function New-NativeProfilePlan($Binding,$Record,$Request) {
+    $null=Assert-NativeTask $Binding $Record
+    if(!(Test-NativeStopped $Binding $Record)){throw 'TUNNEL_PROFILES_REQUIRE_CLEAN_STOP'}
+    $prior=Read-NativeJson (Join-Path $Binding.Root 'native-adapter-owner.json')
+    $entries=@(Get-NativeCredentialInventory $Binding $prior)
+    $cfg=Assert-NativeConfig $Binding
+    $settings=Read-NativeJson (Join-Path $Binding.Root 'settings.json')
+    $profiles=@($cfg.tunnels | ForEach-Object {
+        [pscustomobject]@{profileId=if($_.PSObject.Properties['profileId']){[string]$_.profileId}else{[string]$_.alias};alias=[string]$_.alias;tunnelId=[string]$_.tunnelId;enabled=if($_.PSObject.Properties['enabled']){[bool]$_.enabled}else{$true};keyFile=$_.keyPath.Substring($Binding.Root.TrimEnd('\').Length+1)}
+    })
+    if($Request.Action -cnotin @('Add','Remove','RotateKey')){throw 'TUNNEL_PROFILE_REQUEST_INVALID'}
+    $id=[string]$Request.ProfileId
+    if($id -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$'){throw 'TUNNEL_PROFILE_REQUEST_INVALID'}
+    $matches=@($profiles|Where-Object {$_.profileId -ceq $id})
+    if($Request.Action -ceq 'Add'){
+        if($matches.Count){throw 'TUNNEL_PROFILE_DUPLICATE'}
+        $profile=[pscustomobject]@{profileId=$id;alias=[string]$Request.Alias;tunnelId=[string]$Request.TunnelId;enabled=[bool]$Request.Enabled;keyFile=('keys\'+$id+'-'+[Guid]::NewGuid().ToString('N')+'.dpapi')}
+        $profiles += $profile
+    } else {
+        if($matches.Count -ne 1){throw 'TUNNEL_PROFILE_NOT_FOUND'}
+        $profile=$matches[0]
+        if($Request.Action -ceq 'Remove'){$profiles=@($profiles|Where-Object {$_.profileId -cne $id})}
+        else {$profile.keyFile='keys\'+$id+'-'+[Guid]::NewGuid().ToString('N')+'.dpapi'}
+    }
+    $exe=$cfg.tunnelExe
+    if($Request.Action -ceq 'Add'){
+        if(!$exe){$exe=Resolve-NativeAdapterPath ([string]$Request.TunnelClientExe) 'tunnel client' File -MustExist}
+        elseif($Request.TunnelClientExe -and $Request.TunnelClientExe -ine $exe){throw 'TUNNEL_PROFILE_CLIENT_MISMATCH'}
+        $policy=Get-ArtifactPolicy tunnel
+        if((Get-NativeFileSha256 $exe) -cne $policy.executableSha256){throw 'TUNNEL_PROFILE_CLIENT_PROVENANCE_INVALID'}
+    }
+    $settings.PSObject.Properties.Remove('tunnel')
+    $settings|Add-Member -NotePropertyName tunnelClient -NotePropertyValue ([pscustomobject]@{executable=$exe;profileDir='tunnel-profile'}) -Force
+    $settings|Add-Member -NotePropertyName tunnels -NotePropertyValue @($profiles) -Force
+    $null=ConvertTo-CompanionTunnelConfiguration $settings $Binding.Root -AllowMissingProfileDirectory
+    $newKey=$null
+    if($Request.Action -cne 'Remove'){
+        if($Request.RuntimeKey -isnot [Security.SecureString] -or ($Request.RuntimeKey.Length -eq 0 -or $Request.RuntimeKey.Length -gt 8192)){throw 'TUNNEL_PROFILE_RUNTIME_KEY_REQUIRED'}
+        try {$cipher=ConvertFrom-SecureString $Request.RuntimeKey}
+        catch {throw 'TUNNEL_PROFILE_CREDENTIAL_INVALID'}
+        $bytes=[Text.Encoding]::ASCII.GetBytes($cipher)
+        $newKey=[pscustomobject]@{keyFile=$profile.keyFile;bytes=$bytes;sha256=(Get-NativeBytesSha256 $bytes)}
+        $entries += [pscustomobject]@{keyFile=$newKey.keyFile;sha256=$newKey.sha256}
+        $cipher=$null
+    }
+    # Retired encrypted revisions remain locally owned for verified uninstall and rollback.
+    # They are never part of the active tunnel collection or copied to another destination.
+    if($entries.Count -gt 128){throw 'TUNNEL_PROFILE_CREDENTIAL_LIMIT'}
+    $settingsBytes=[Text.UTF8Encoding]::new($false).GetBytes(($settings|ConvertTo-Json -Depth 8 -Compress))
+    $next=[ordered]@{version=2;state='active';transactionId=[string]$Record.transactionId;generationId=[string]$Record.generationId;payloadSha256=[string]$Record.payloadSha256;nodeSha256=$Binding.NodeSha256;settingsSha256=(Get-NativeBytesSha256 $settingsBytes);credentialFiles=@($entries);taskNameSha256=(Get-NativeStringSha256 $Binding.TaskName);taskBindingSha256=(Get-NativeStringSha256 (([string]$Record.transactionId)+'/'+([string]$Record.generationId)))}
+    $ownerBytes=[Text.UTF8Encoding]::new($false).GetBytes(($next|ConvertTo-Json -Depth 8 -Compress))
+    [pscustomobject]@{profileId=$id;action=[string]$Request.Action;settingsBytes=$settingsBytes;ownerBytes=$ownerBytes;newKey=$newKey;priorSettingsSha256=$prior.settingsSha256;priorOwnerSha256=(Get-NativeFileSha256 (Join-Path $Binding.Root 'native-adapter-owner.json'))}
+}
+
+function Invoke-NativeProfilePlan($Binding,$Record,$Plan) {
+    $fence=Assert-NativeFenceRecord $Binding $Record @('profiles/committing')
+    if((Get-NativeBytesSha256 $Plan.settingsBytes) -cne $fence.nextSettingsSha256 -or (Get-NativeBytesSha256 $Plan.ownerBytes) -cne $fence.nextOwnerSha256 -or
+       (Get-NativeFileSha256 (Join-Path $Binding.Root 'settings.json')) -cne $fence.priorSettingsSha256 -or
+       (Get-NativeFileSha256 (Join-Path $Binding.Root 'native-adapter-owner.json')) -cne $fence.priorOwnerSha256){throw 'TUNNEL_PROFILE_STATE_CHANGED'}
+    $definition=New-NativeTaskDefinition $Binding $Record
+    $authority=Open-HouseholdTaskAuthority -Definition $definition
+    try {
+        $null=Assert-NativeTask $Binding $Record
+        if(!(Test-NativeStopped $Binding $Record)){throw 'TUNNEL_PROFILES_REQUIRE_CLEAN_STOP'}
+        if($null -ne $Plan.newKey){
+            if($Plan.newKey.keyFile -cne $fence.newKeyFile -or (Get-NativeBytesSha256 $Plan.newKey.bytes) -cne $fence.newKeySha256){throw 'TUNNEL_PROFILE_STATE_CHANGED'}
+            $path=Resolve-NativeAdapterPath (Join-Path $Binding.Root $Plan.newKey.keyFile) 'new credential'
+            $dir=Split-Path $path -Parent
+            if(!(Test-Path -LiteralPath $dir)){$null=New-Item -ItemType Directory -Path $dir -ErrorAction Stop}
+            $stream=$null
+            try {$stream=[IO.File]::Open($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read);$stream.Write($Plan.newKey.bytes,0,$Plan.newKey.bytes.Length);$stream.Flush($true)}finally{if($stream){$stream.Dispose()}}
+        }
+        $profileDir=Resolve-NativeAdapterPath (Join-Path $Binding.Root 'tunnel-profile') 'tunnel profile directory'
+        if(!(Test-Path -LiteralPath $profileDir)){$null=New-Item -ItemType Directory -Path $profileDir -ErrorAction Stop}
+        Write-NativeProfileBytes (Join-Path $Binding.Root 'settings.json') $Plan.settingsBytes
+        Write-NativeProfileBytes (Join-Path $Binding.Root 'native-adapter-owner.json') $Plan.ownerBytes
+        $null=Assert-NativeTask $Binding $Record
+        if(!(Test-NativeStopped $Binding $Record)){throw 'TUNNEL_PROFILES_REQUIRE_CLEAN_STOP'}
+    } finally {$authority.Dispose()}
+}
+
+function Restore-NativeProfilePlan($Binding,$Record,$Fence) {
+    $null=Assert-NativeFenceRecord $Binding $Record @('profiles/committing','profiles/verifying')
+    $settingsPath=Join-Path $Binding.Root 'settings.json';$ownerPath=Join-Path $Binding.Root 'native-adapter-owner.json'
+    try {$settingsBytes=[Convert]::FromBase64String($Fence.priorSettingsBytes);$ownerBytes=[Convert]::FromBase64String($Fence.priorOwnerBytes)}catch{throw 'TUNNEL_PROFILE_RECOVERY_INVALID'}
+    if((Get-NativeBytesSha256 $settingsBytes) -cne $Fence.priorSettingsSha256 -or (Get-NativeBytesSha256 $ownerBytes) -cne $Fence.priorOwnerSha256){throw 'TUNNEL_PROFILE_RECOVERY_INVALID'}
+    $a=Get-NativeFileSha256 $settingsPath;$b=Get-NativeFileSha256 $ownerPath
+    if($a -cnotin @($Fence.priorSettingsSha256,$Fence.nextSettingsSha256) -or $b -cnotin @($Fence.priorOwnerSha256,$Fence.nextOwnerSha256) -or ($a -ceq $Fence.priorSettingsSha256 -and $b -cne $Fence.priorOwnerSha256)){throw 'TUNNEL_PROFILE_STATE_CHANGED'}
+    $definition=New-NativeTaskDefinition $Binding $Record
+    $authority=Open-HouseholdTaskAuthority -Definition $definition
+    try {
+        $task=Get-NativeTask $Binding
+        Assert-HouseholdTaskIdentity $task.xml $definition
+        if($task.state -ceq 'Running' -or (Test-HouseholdOwnershipEvidence $Binding.Root) -or (Test-TcpPort -Port $Binding.Port)){throw 'TUNNEL_PROFILES_REQUIRE_CLEAN_STOP'}
+        $newPath=$null
+        if($null -ne $Fence.newKeyFile){
+            if([string]$Fence.newKeyFile -cnotmatch '^keys[\\/][A-Za-z0-9][A-Za-z0-9_-]{0,63}-[0-9a-f]{32}\.dpapi$' -or $Fence.newKeySha256 -cnotmatch '^[0-9a-f]{64}$'){throw 'TUNNEL_PROFILE_RECOVERY_INVALID'}
+            $newPath=Resolve-NativeAdapterPath (Join-Path $Binding.Root $Fence.newKeyFile) 'new credential'
+            if((Test-Path -LiteralPath $newPath) -and (Get-NativeFileSha256 $newPath) -cne $Fence.newKeySha256){throw 'TUNNEL_PROFILE_STATE_CHANGED'}
+        }
+        Write-NativeProfileBytes $ownerPath $ownerBytes
+        Write-NativeProfileBytes $settingsPath $settingsBytes
+        $null=Assert-NativeTask $Binding $Record
+        if(!(Test-NativeStopped $Binding $Record)){throw 'TUNNEL_PROFILES_REQUIRE_CLEAN_STOP'}
+        if($newPath -and (Test-Path -LiteralPath $newPath)){Remove-Item -LiteralPath $newPath -ErrorAction Stop}
+    } finally {$authority.Dispose()}
 }
 
 function New-NativeTransactionAdapter {
@@ -464,6 +609,9 @@ function New-NativeTransactionAdapter {
     $writeJson=(Get-Command Write-NativeJson -CommandType Function).ScriptBlock
     $newOwnerReceipt=(Get-Command New-NativeOwnerReceipt -CommandType Function).ScriptBlock
     $removeOwnedState=(Get-Command Remove-NativeOwnedState -CommandType Function).ScriptBlock
+    $prepareProfiles=(Get-Command New-NativeProfilePlan -CommandType Function).ScriptBlock
+    $applyProfiles=(Get-Command Invoke-NativeProfilePlan -CommandType Function).ScriptBlock
+    $recoverProfiles=(Get-Command Restore-NativeProfilePlan -CommandType Function).ScriptBlock
 
     $assertHouseholdTaskIdentity=Get-Command Assert-HouseholdTaskIdentity -ErrorAction Stop
     $openHouseholdTaskAuthority=Get-Command Open-HouseholdTaskAuthority -ErrorAction Stop
@@ -478,6 +626,10 @@ function New-NativeTransactionAdapter {
     $assertMutation=Get-Command Assert-CompanionMutationHeld -ErrorAction Stop
 
     @{
+        PrepareProfiles={param($record,$request) & $assertMutation $binding.Root; & $prepareProfiles $binding $record $request}.GetNewClosure()
+        ApplyProfiles={param($record,$plan) & $assertMutation $binding.Root; & $applyProfiles $binding $record $plan}.GetNewClosure()
+        RecoverProfiles={param($record,$fence) & $assertMutation $binding.Root; & $recoverProfiles $binding $record $fence}.GetNewClosure()
+
         Validate={
             param($candidateRoot,$payload)
             $rootCheck=& $resolvePath $candidateRoot 'destination root'
@@ -556,7 +708,7 @@ function New-NativeTransactionAdapter {
                 $state=& $getHouseholdRuntimeState $definition
                 $tunnelsReady=$true
                 foreach ($tunnel in @($state.tunnels)) {
-                    if (!$tunnel.ready) { $tunnelsReady=$false;break }
+                    if ((!$tunnel.PSObject.Properties['enabled'] -or $tunnel.enabled) -and !$tunnel.ready) { $tunnelsReady=$false;break }
                 }
                 if ($state.taskState -eq 'Running' -and $state.ownerVerified -and
                     $state.piecesVerified -and $state.listenerPresent -and

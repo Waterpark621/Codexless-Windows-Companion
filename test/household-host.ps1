@@ -171,7 +171,7 @@ Test 'Normal cooperative stop removes wrapper PID only after console and listene
 }
 Test 'Failed official tunnel stop records degraded stage and preserves remaining wrapper tracking' {
     Reset-StopFixture;$mock.stopError='HOUSEHOLD_TUNNEL_STOP_FAILED: fake-private-value'
-    Assert-Throws { Invoke-HouseholdHostBody } 'HOUSEHOLD_TUNNEL_STOP_FAILED'
+    Assert-Throws { Invoke-HouseholdHostBody } 'HOUSEHOLD_TUNNEL_STOP_UNPROVEN'
     Assert-True ($mock.cleanupStages[0] -ceq 'tunnel-stop' -and $mock.consoleStops -eq 0 -and $mock.removes.Count -eq 0)
     Assert-True (@($mock.logs | Where-Object { $_ -match 'fake-private-value' }).Count -eq 0)
 }
@@ -215,5 +215,21 @@ Test 'Staged Host never contains a force-termination or security-job escape path
     Assert-True ($source -notmatch 'taskkill|Stop-Process|Stop-ScheduledTask|TerminateProcess|CREATE_BREAKAWAY_FROM_JOB')
     Assert-True ($source.Contains('Request-PrivateConsoleStop'))
     Assert-True ($source.Contains('runtimes stop'))
+}
+Test 'One profile key failure leaves two independent profiles running and does not leak the exception' {
+    $mock.stopRequested=$false;$mock.cleanupStages.Clear();$mock.logs.Clear()
+    $script:MultiStarted=New-Object Collections.Generic.List[string]
+    function Get-ConfiguredTunnels {param($cfg,[switch]$IncludeDisabled) @([pscustomobject]@{alias='bad'},[pscustomobject]@{alias='healthy-one'},[pscustomobject]@{alias='healthy-two'})}
+    function Start-CodexlessIfNeeded {param($cfg) $true}
+    function Start-TunnelIfNeeded {param($cfg,$tunnel)
+        if($tunnel.alias -ceq 'bad'){throw 'fixture-private-runtime-key'}
+        $script:MultiStarted.Add($tunnel.alias)
+        if($tunnel.alias -ceq 'healthy-two'){$mock.stopRequested=$true}
+        $true
+    }
+    function Stop-ManagedPieces {param($cfg)}
+    Invoke-HouseholdHostBody
+    Assert-True ($script:MultiStarted.Count -eq 2 -and $mock.cleanupStages.Count -eq 0)
+    Assert-True (!(($mock.logs -join '|').Contains('fixture-private-runtime-key')))
 }
 Write-Output ("RESULT: {0}/{0} PASS; Host adapters mocked; no task/runtime/tunnel operations" -f $results.Count)

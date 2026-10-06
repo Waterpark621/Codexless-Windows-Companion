@@ -154,12 +154,18 @@ function Stop-HouseholdTunnel($cfg,$tunnel) {
 function Stop-ManagedPieces($cfg) {
     $script:HouseholdStage='tunnel-stop'
     Write-LauncherLog 'Stopping Companion-managed tunnel clients through their official command.'
-    foreach ($tunnel in @(Get-ConfiguredTunnels $cfg -IncludeDisabled)) { Stop-HouseholdTunnel $cfg $tunnel }
+    $stopUnproven=$false
+    foreach ($tunnel in @(Get-ConfiguredTunnels $cfg -IncludeDisabled)) {
+        try {Stop-HouseholdTunnel $cfg $tunnel}
+        catch {$stopUnproven=$true;Write-LauncherLog "Tunnel '$($tunnel.alias)' stop remains unproven; its evidence was retained."}
+    }
+    if($stopUnproven){throw 'HOUSEHOLD_TUNNEL_STOP_UNPROVEN: Tunnel evidence retained.'}
     $script:HouseholdStage='tunnel-wait'
     $deadline=(Get-HouseholdTime).AddSeconds(30)
     do {
         $alive=$false
         foreach ($tunnel in @(Get-ConfiguredTunnels $cfg -IncludeDisabled)) {
+            if(Test-TunnelGenerationUnlaunched $cfg $tunnel){continue}
             $status=Get-TunnelStatus $cfg $tunnel
             if ($null -eq $status -or !$status.PSObject.Properties['process_running'] -or $status.process_running -isnot [bool] -or $status.process_running -eq $true) { $alive=$true }
         }
@@ -190,7 +196,12 @@ function Invoke-HouseholdHostBody {
             if ($ownedReady) {
                 foreach ($tunnel in @(Get-ConfiguredTunnels $cfg)) {
                     if (Test-HouseholdStopRequested) { break }
-                    $null=Start-TunnelIfNeeded $cfg $tunnel
+                    try {$null=Start-TunnelIfNeeded $cfg $tunnel}
+                    catch {
+                        # A profile's credential/connect failure retains its own fence.
+                        # Never log native output or exception text containing key material.
+                        Write-LauncherLog "Tunnel '$($tunnel.alias)' is unavailable or fenced; other profiles continue."
+                    }
                 }
             }
             }finally{$cycleLease.Dispose()}

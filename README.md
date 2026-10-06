@@ -72,3 +72,5 @@ Keep the ownership/security mechanisms; remove machine assumptions.
 Before any push or release, run `tools/Test-PublicTree.ps1`, scan the complete Git history with private needles, and inspect the exact release archive contents. Runtime tunnel profiles and Browser/cache directories must never be packaged.
 
 See docs/ARCHITECTURE.md, docs/PORTABILITY-CHECKLIST.md, and docs/PRIVACY.md.
+
+Advanced destination-local multi-tunnel management is described in [Multi-tunnel profiles](docs/MULTI-TUNNEL-PROFILES.md). The simple installer retains its zero-or-one default tunnel plan. Publication and second-machine acceptance gates still apply.

@@ -232,7 +232,7 @@ try {
     Invoke-Case 'unique_disposable_scheduler_duplicate_start' 'windows-live' {Invoke-LiveSchedulerProbe} 'UNIQUE_TASK_COOPERATIVE_LIFECYCLE'
 
     $nativeReport=Join-Path $fixtureRoot 'native-report.json'
-    & powershell.exe -NoProfile -File (Join-Path $PSScriptRoot 'native-disposable-acceptance.ps1') -CandidateRoot $LocalCandidateRoot -ReportPath $nativeReport
+    & powershell.exe -NoProfile -File (Join-Path $PSScriptRoot 'native-disposable-acceptance.ps1') -CandidateRoot $LocalCandidateRoot -ReportPath $nativeReport -QualifiedTunnelExe $QualifiedTunnelExe
     $nativeExit=$LASTEXITCODE
     if(Test-Path -LiteralPath $nativeReport){
         $native=Get-Content -LiteralPath $nativeReport -Raw|ConvertFrom-Json

@@ -220,7 +220,7 @@ function Get-HouseholdRuntimeState {
             # Existing aliases are reused, never replaced or registered anew.
             if ($null -eq $identity -or $null -eq $receipt -or $identity.userSid -ne $Definition.UserSid -or $identity.executable -ine $cfg.tunnelExe -or $identity.createdAt -lt $receipt.createdAt -or !$status.PSObject.Properties['tunnel_id'] -or $status.tunnel_id -ne $tunnel.tunnelId) { $piecesVerified = $false }
         }
-        $tunnels += [pscustomobject]@{ alias=$tunnel.alias; alive=$alive; ready=($alive -and $status.PSObject.Properties['healthy'] -and $status.healthy -is [bool] -and $status.healthy -and $status.PSObject.Properties['ready'] -and $status.ready -is [bool] -and $status.ready) }
+        $tunnels += [pscustomobject]@{ profileId=if($tunnel.PSObject.Properties['profileId']){$tunnel.profileId}else{$tunnel.alias}; enabled=if($tunnel.PSObject.Properties['enabled']){$tunnel.enabled}else{$true}; alias=$tunnel.alias; alive=$alive; ready=($alive -and $status.PSObject.Properties['healthy'] -and $status.healthy -is [bool] -and $status.healthy -and $status.PSObject.Properties['ready'] -and $status.ready -is [bool] -and $status.ready) }
     }
     [pscustomobject]@{ taskState=$taskState; hostPresent=($null -ne $hostIdentity); ownerVerified=$ownerVerified; piecesVerified=$piecesVerified; listenerPresent=$listenerPresent; tunnelPresent=$tunnelPresent; tunnels=$tunnels; cleanupRequired=$cleanupRequired; cleanupState=$cleanupState }
 }
@@ -253,7 +253,7 @@ function New-WindowsTaskAdapter {
             $deadline=[DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
             do {
                 $state=& $getRuntimeState $binding
-                $tunnelsReady=@($state.tunnels|Where-Object {!$_.ready}).Count -eq 0
+                $tunnelsReady=@($state.tunnels|Where-Object {(!$_.PSObject.Properties['enabled'] -or $_.enabled) -and !$_.ready}).Count -eq 0
                 if($state.taskState -eq 'Running' -and $state.ownerVerified -and $state.piecesVerified -and
                    $state.listenerPresent -and !$state.cleanupRequired -and $tunnelsReady -and (& $testReady (& $getConfig $binding.LauncherDirectory))){return}
                 if($state.cleanupRequired -or [DateTime]::UtcNow -ge $deadline){throw 'HOUSEHOLD_START_NOT_READY'}

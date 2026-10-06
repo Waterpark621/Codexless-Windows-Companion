@@ -131,7 +131,7 @@ function Record-OwnedTunnelCore([string]$LauncherDirectory,$Config,$Tunnel,$Stat
  $context=Get-TunnelGenerationProof $Config $Tunnel
  $hash=Assert-TunnelExecutable $Config
  $identity=Get-VerifiedTunnelIdentity $Config $Tunnel $Status
- if($null -eq $identity -or !$LaunchEvidence.Ok -or $LaunchEvidence.ProcessId -le 0 -or $identity.parentPid -ne $LaunchEvidence.ProcessId -or $Status.healthy -isnot [bool] -or !$Status.healthy -or $Status.ready -isnot [bool] -or !$Status.ready -or $Status.process.mode -cne 'process'){throw 'TUNNEL_LAUNCH_PROVENANCE_INVALID'}
+ if($null -eq $identity -or !(Test-TunnelConnectCompleted $LaunchEvidence) -or $LaunchEvidence.ProcessId -le 0 -or $identity.parentPid -ne $LaunchEvidence.ProcessId -or $Status.healthy -isnot [bool] -or $Status.ready -isnot [bool] -or $Status.process.mode -cne 'process'){throw 'TUNNEL_LAUNCH_PROVENANCE_INVALID'}
  Assert-TunnelManagedCommand $identity $Config $Tunnel $context
  $file=Get-TunnelOwnerPath $LauncherDirectory $Tunnel
  if(Test-Path -LiteralPath $file){throw 'TUNNEL_OWNER_RECEIPT_EXISTS'}
@@ -170,12 +170,35 @@ function Test-TunnelGenerationUnlaunched($Config,$Tunnel) {
  $context=Get-TunnelGenerationProof $Config $Tunnel
  !(Test-Path -LiteralPath $context.stateRoot) -and !(Test-Path -LiteralPath (Get-TunnelOwnerPath $Config.companionRoot $Tunnel))
 }
+function Open-TunnelSiblingAdmission([string]$LauncherDirectory,$Config,$Tunnel) {
+ $leases=[Collections.ArrayList]::new()
+ try {
+  $profiles=@()
+  if($Config.PSObject.Properties['tunnels']){$profiles=@($Config.tunnels)}
+  $clientName=[IO.Path]::GetFileName([string]$Config.tunnelExe).Replace("'","''")
+  foreach($process in @(Get-CimInstance Win32_Process -Filter ("Name='tunnel-client.exe' OR Name='"+$clientName+"'") -OperationTimeoutSec 10 -ErrorAction Stop)){
+   $bindings=@()
+   foreach($sibling in $profiles){
+    if($sibling.alias -ceq $Tunnel.alias){continue}
+    $binding=$null
+    try {$binding=Open-OwnedTunnelLifetime $LauncherDirectory $Config $sibling (Get-TunnelStatus $Config $sibling)}catch {continue}
+    if($null -ne $binding){
+     if($binding.receipt.pid -eq $process.ProcessId){$bindings += $binding}else{$binding.lease.Dispose()}
+    }
+   }
+   foreach($binding in $bindings){[void]$leases.Add($binding.lease)}
+   if($bindings.Count -ne 1){throw 'TUNNEL_FOREIGN_PROCESS_PRESENT'}
+  }
+  # Keep exact sibling lifetimes pinned until this connect has completed.
+  [pscustomobject]@{leases=$leases}
+ } catch {foreach($lease in $leases){$lease.Dispose()};throw}
+}
 function Start-OwnedTunnelCore([string]$LauncherDirectory,$Config,$Tunnel,[string]$PlainKey) {
  $context=Get-TunnelGenerationProof $Config $Tunnel
  Assert-TunnelExecutable $Config|Out-Null
  if(!(Test-TunnelGenerationUnlaunched $Config $Tunnel)){throw 'TUNNEL_CONNECT_GENERATION_FENCED'}
- # Refuse any existing full client, including another managed generation.
- if(@(Get-CimInstance Win32_Process -Filter "Name='tunnel-client.exe'" -OperationTimeoutSec 10 -ErrorAction Stop).Count){throw 'TUNNEL_FOREIGN_PROCESS_PRESENT'}
+ $admission=Open-TunnelSiblingAdmission $LauncherDirectory $Config $Tunnel
+ try {
  $ownerIdentity=Get-ConsoleProcessIdentity ([int]$context.owner.pid)
  if($null -eq $ownerIdentity -or $ownerIdentity.createdAt -cne $context.owner.createdAt -or $ownerIdentity.userSid -cne $context.owner.userSid){throw 'TUNNEL_GENERATION_OWNER_INVALID'}
  # Atomic fresh directory reservation. Every failed attempt stays fenced.
@@ -189,8 +212,10 @@ function Start-OwnedTunnelCore([string]$LauncherDirectory,$Config,$Tunnel,[strin
   Record-OwnedTunnel $LauncherDirectory $Config $Tunnel $status $launch
   Test-OwnedTunnel $LauncherDirectory $Config $Tunnel $status
  }finally{$PlainKey=$null;$launch=$null;$status=$null}
+ }finally{foreach($lease in $admission.leases){$lease.Dispose()}}
 }
 function Stop-OwnedTunnelCore([string]$LauncherDirectory,$Config,$Tunnel) {
+ if(Test-TunnelGenerationUnlaunched $Config $Tunnel){return}
  $binding=Open-OwnedTunnelLifetime $LauncherDirectory $Config $Tunnel (Get-TunnelStatus $Config $Tunnel)
  if($null -eq $binding){return}
  $context=Get-TunnelGenerationProof $Config $Tunnel
