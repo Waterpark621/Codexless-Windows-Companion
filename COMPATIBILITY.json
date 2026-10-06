@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "packageKind": "codexless-windows-companion",
-  "companionVersion": "0.1.0-preview.2",
+  "companionVersion": "0.1.0-preview.3",
   "status": "locally-qualified-friend-preview",
   "sourceLineage": {
     "validatedHouseholdCommit": "37686a932ff0c355d363cd4dc3bbf1a9c3a46dc1"
