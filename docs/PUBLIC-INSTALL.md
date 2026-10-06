@@ -50,9 +50,9 @@ The restricted GUID task-name parameter on lifecycle/Doctor scripts exists only 
 
 ## Simple CMD launchers
 
-The seven CMD files invoke only Windows PowerShell 5.1 and Launcher.ps1. The UI does not replace installation, ownership, recovery or tunnel engines. It supplies the selected project/optional tunnel ID to Install.ps1 and delegates runtime-key entry to the existing SecureString prompt. CMD files never carry credentials or runtime configuration.
+The seven CMD files invoke only Windows PowerShell 5.1 and Launcher.ps1. The UI does not replace installation, ownership, recovery or tunnel engines. It calls the selected directory the **Codexless workspace folder** and passes it unchanged as the existing `ProjectPath` parameter to Install.ps1. It supplies the optional tunnel ID and delegates runtime-key entry to the existing SecureString prompt. CMD files never carry credentials or runtime configuration.
 
-INSTALL resolves the externally expected payload tree digest from the HTTPS GitHub release notes for the exact VERSION tag in Waterpark621/Codexless-Windows-Companion. It refuses unpublished/draft releases, moving commit identities, missing/duplicate digests, wrong asset identity and altered extracted payloads. It never computes its own expected authority from the local files. The bounded request uses no credentials/cookies or redirects. The next publication must use v0.1.0-preview.2 and the existing release-note payload-digest field; this local UI candidate has not been published.
+INSTALL resolves the externally expected payload tree digest from the HTTPS GitHub release notes for the exact VERSION tag in Waterpark621/Codexless-Windows-Companion. It refuses unpublished/draft releases, moving commit identities, missing/duplicate digests, wrong asset identity and altered extracted payloads. It never computes its own expected authority from the local files. The bounded request uses no credentials/cookies or redirects. Every publication must bind its exact version, attached ZIP and existing release-note payload-digest field; an edited local payload is not interchangeable with the published ZIP.
 
 Daily controls resolve the installed generation using the existing destination-owned receipt and Get-OwnedInstall/native authority verification, including payload/provenance and exact task identity. They use the same receipt trust already used by installed Tunnels.ps1 and do not require an online release-note fetch. An incomplete, changed, foreign or ambiguous installation remains refused. They do not fall back to an arbitrary source script or legacy host.
 
@@ -159,6 +159,19 @@ Invoke-OwnedUninstall -Root $root -Adapter $adapter
 ```
 
 A verified uninstall tombstone permits reinstall. Runtime dependency staging remains beside the destination because settings reference it; uninstall does not authorize deleting unrelated directories. There is no `Uninstall.ps1` script in this Preview.
+
+## Changing workspace after installation
+
+There is no qualified in-place `ProjectPath` reconfiguration command and no `CHANGE-WORKSPACE.cmd`. The native adapter binds the workspace path to the verified settings/owner state; update and repair retain that binding. The stopped-only profile transaction changes tunnel profiles, not the workspace. Do not hand-edit settings, immutable generation files or receipts.
+
+Use the existing verified uninstall/reinstall contract:
+
+1. Run `STOP.cmd` from the extracted release folder for the current installation.
+2. Resolve the current installed generation as shown above, use the trusted payload digest from that installed release's notes, and run the **Uninstall** block above. Keep its adapter bound to `$cfg.projectPath`, the original workspace. Require `state: uninstalled` and `verified: true`; an incomplete or ambiguous uninstall must be recovered through the existing verified path before proceeding.
+3. Reinstall from an intact verified release ZIP using `INSTALL.cmd`, choosing the new existing workspace. For a custom destination, use the manual install reference with the same `-InstallDirectory` and the new `-ProjectPath`; retain the original port choice if customized. The verified uninstall tombstone allows this reinstall into the retained destination.
+4. Configure optional tunnel profiles through the normal install/Advanced flow with destination-local runtime keys, then run `DOCTOR.cmd` and require PASS.
+
+Verified uninstall preserves workspace/project data and unknown root data. It removes only unchanged owned payload/state/credential files and the exact owned task. Reinstall creates fresh verified settings/ownership and fresh destination-local DPAPI state when a tunnel is configured. Do not copy or hand-edit the retired settings or credential files, and do not delete receipts or dependency directories to bypass a refusal.
 
 ## Troubleshooting
 

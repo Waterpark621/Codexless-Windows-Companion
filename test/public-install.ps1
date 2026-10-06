@@ -211,8 +211,8 @@ $services=@{
  Config={param($root) & $nativeModule {param($root) Get-CompanionConfig $root} $root}.GetNewClosure()
 }
 & $public {param($s) $script:PublicFixtureServices=$s;function script:New-PublicInstallServices {$script:PublicFixtureServices}} $services
-function Install([string]$root,[switch]$Tunnel,[switch]$Recover,[string]$Expected=$digest) {
- $args=@{PayloadRoot=$payload;TrustedPayloadSha256=$Expected;InstallDirectory=$root;ProjectPath=$project;NodeExe=$node;CodexlessArchivePath=$archive;Recover=$Recover}
+function Install([string]$root,[switch]$Tunnel,[switch]$Recover,[string]$Expected=$digest,[string]$Workspace=$project) {
+ $args=@{PayloadRoot=$payload;TrustedPayloadSha256=$Expected;InstallDirectory=$root;ProjectPath=$Workspace;NodeExe=$node;CodexlessArchivePath=$archive;Recover=$Recover}
  if($Tunnel){$args.TunnelId='tunnel_fixture';$args.TunnelAlias='fixture';$args.TunnelClientExe=$tunnelExe;$args.TunnelRuntimeKey=$runtimeKey}else{$args.NoTunnel=$true}
  Invoke-PublicCompanionInstall @args
 }
@@ -243,6 +243,23 @@ Test 'Owned uninstall and reinstall use existing retirement contract' {
  $r=Invoke-OwnedUninstall $destination $state.LastAdapter;Assert ($r.state -ceq 'uninstalled')
  $r=Install $destination;Assert ($r.state -ceq 'installed')
  Invoke-OwnedUninstall $destination $state.LastAdapter|Out-Null
+}
+Test 'Verified uninstall then reinstall changes workspace with fresh binding and preserves both project folders' {
+ $root=Join-Path $fixture 'workspace-reinstall'
+ $nextWorkspace=Join-Path $fixture 'workspace with spaces'
+ New-Item -ItemType Directory -Path $nextWorkspace|Out-Null
+ $oldData=Join-Path $project 'workspace-preserved.txt';$newData=Join-Path $nextWorkspace 'workspace-preserved.txt'
+ [IO.File]::WriteAllText($oldData,'original project data');[IO.File]::WriteAllText($newData,'new workspace data')
+ $r=Install $root;Assert ($r.verified -and $r.doctorVerdict -ceq 'PASS')
+ $priorGeneration=(Get-Content -LiteralPath (Join-Path $root 'install-owner.json') -Raw|ConvertFrom-Json).generationId
+ $r=Invoke-OwnedUninstall $root $state.LastAdapter;Assert ($r.state -ceq 'uninstalled' -and $r.verified)
+ Assert (!(Test-Path -LiteralPath (Join-Path $root 'settings.json')) -and (Test-Path -LiteralPath (Join-Path $root 'uninstalled-owner.json')))
+ $r=Install $root -Workspace $nextWorkspace;Assert ($r.state -ceq 'installed' -and $r.verified -and $r.doctorVerdict -ceq 'PASS')
+ $settings=Get-Content -LiteralPath (Join-Path $root 'settings.json') -Raw|ConvertFrom-Json
+ Assert ($settings.project.path -ceq [IO.Path]::GetFullPath($nextWorkspace))
+ Assert ((Get-Content -LiteralPath (Join-Path $root 'install-owner.json') -Raw|ConvertFrom-Json).generationId -cne $priorGeneration)
+ Assert ([IO.File]::ReadAllText($oldData) -ceq 'original project data' -and [IO.File]::ReadAllText($newData) -ceq 'new workspace data')
+ Invoke-OwnedUninstall $root $state.LastAdapter|Out-Null
 }
 Test 'Foreign task is never adopted or overwritten' {
  & $nativeModule {$script:MockTaskXml='<foreign/>'}

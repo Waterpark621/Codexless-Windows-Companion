@@ -4,19 +4,39 @@ Install and run Codexless on Windows with automatic startup, recovery, Browser h
 
 **Preview — locally qualified; external clean-machine validation pending.**
 
-## Install
+## Quick Start
 
-1. Download the attached Preview ZIP from [Releases](https://github.com/Waterpark621/Codexless-Windows-Companion/releases).
-2. Extract the ZIP into a new folder.
-3. Double-click **INSTALL.cmd**.
-4. Choose your existing project folder and whether to set up one tunnel now.
+1. Download the attached Preview ZIP from [Releases](https://github.com/Waterpark621/Codexless-Windows-Companion/releases) and extract it into a new folder.
+2. Double-click **INSTALL.cmd**.
+3. Choose your **Codexless workspace folder**.
+4. Optionally configure one tunnel.
 5. Run **DOCTOR.cmd** and require **PASS**.
 
 If you choose a tunnel, enter its existing tunnel ID and runtime API key when prompted. The key prompt is secure, and the key stays on your PC using Windows DPAPI. Never enter an admin key. You can add tunnels later.
 
-The launcher handles release verification, settings and installed-generation selection internally. Installation needs Internet access and the exact published Preview ZIP; GitHub's source-code ZIP is not the installer. Modified, incomplete or unpublished payloads are refused. Verify the downloaded ZIP against the checksum in the release notes.
+Installation needs Internet access and the exact published Preview ZIP; GitHub's source-code ZIP is not the installer. Modified, incomplete or unpublished payloads are refused. Verify the downloaded ZIP against the checksum in the release notes.
 
-Requirements: Windows x64, a normal logged-in user, an existing local project folder and a supported connected Codexless Browser backend. Windows security policy must permit the per-user startup task and qualified executables. No administrator account is required. The household runs while you are logged in.
+Requirements: Windows x64, a normal logged-in user, an existing local workspace folder and a supported connected Codexless Browser backend. Windows security policy must permit the per-user startup task and qualified executables. No administrator account is required. The household runs while you are logged in.
+
+## Choosing a workspace
+
+Your **Codexless workspace folder** is the folder Codexless uses for its work. If you have one project, choose that project's directory directly, for example `D:\MyGame`.
+
+If you work on several projects, create one dedicated parent workspace and keep your projects inside it:
+
+```text
+D:\Codexless Work\
+├── MyGame\
+├── Website\
+├── BotProject\
+└── Experiments\
+```
+
+Then select **`D:\Codexless Work\`** during installation. The folder must already exist. Choose only the projects you intend Codexless to work with; do not select a whole drive, your user profile root or an unnecessarily broad folder. Keep the extracted Companion ZIP folder and installation destination separate from your workspace.
+
+### Changing workspace later
+
+This Preview has no in-place workspace switch. Run **STOP.cmd**, then follow the [verified uninstall and reinstall workflow](docs/PUBLIC-INSTALL.md#changing-workspace-after-installation). Reinstall from the verified release ZIP, choose the new workspace and run **DOCTOR.cmd**; require **PASS**. Your project files are preserved. Configure any optional tunnels again during or after reinstall.
 
 ## Daily use
 

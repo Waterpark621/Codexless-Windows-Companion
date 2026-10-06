@@ -10,7 +10,7 @@ $passed=0
 function Assert([bool]$v){if(!$v){throw 'launcher assertion failed'}}
 function Test([string]$name,[scriptblock]$body){& $body;$script:passed++;Write-Output ('PASS '+$name)}
 function Refuses([scriptblock]$body,[string]$prefix){$failed=$false;try{& $body|Out-Null}catch{$failed=$_.Exception.Message -like ($prefix+'*')};Assert $failed}
-$state=[pscustomobject]@{reads=[Collections.Generic.Queue[string]]::new();prompts=[Collections.Generic.List[string]]::new();calls=[Collections.Generic.List[object]]::new();events=[Collections.Generic.List[string]]::new();foreign=$false;unpublished=$false;tampered=$false}
+$state=[pscustomobject]@{reads=[Collections.Generic.Queue[string]]::new();prompts=[Collections.Generic.List[string]]::new();messages=[Collections.Generic.List[string]]::new();readMessageCounts=[Collections.Generic.List[int]]::new();calls=[Collections.Generic.List[object]]::new();events=[Collections.Generic.List[string]]::new();foreign=$false;unpublished=$false;tampered=$false}
 $services=@{
  Version={param($p) '0.1.0-preview.2'}
  Trust={param($v) $state.events.Add('trust');if($state.unpublished){throw 'LAUNCHER_RELEASE_TRUST_UNAVAILABLE'};'a'*64}.GetNewClosure()
@@ -18,18 +18,36 @@ $services=@{
  Owned={param($p) $state.events.Add('owned');if($state.foreign){throw 'TRANSACTION_OWNER_INVALID'};[pscustomobject]@{generation=$generation}}.GetNewClosure()
  Invoke={param($p,$a) $copy=@{};foreach($key in $a.Keys){$copy[$key]=$a[$key]};$state.calls.Add([pscustomobject]@{script=$p;parameters=$copy})}.GetNewClosure()
  Client={param($p) Join-Path $root 'qualified-client.exe'}.GetNewClosure()
- Read={param($p) $state.prompts.Add($p);if(!$state.reads.Count){throw 'unexpected prompt'};$state.reads.Dequeue()}.GetNewClosure()
- Write={param($m)}
+ Read={param($p) $state.prompts.Add($p);$state.readMessageCounts.Add($state.messages.Count);if(!$state.reads.Count){throw 'unexpected prompt'};$state.reads.Dequeue()}.GetNewClosure()
+ Write={param($m) $state.messages.Add($m)}.GetNewClosure()
 }
 & $module {param($s) $script:UiFixture=$s;function script:New-LauncherUiServices {$script:UiFixture}} $services
-function Reset([string[]]$Answers=@()){$state.calls.Clear();$state.prompts.Clear();$state.events.Clear();$state.reads.Clear();$state.foreign=$false;$state.unpublished=$false;$state.tampered=$false;foreach($a in $Answers){$state.reads.Enqueue($a)}}
+function Reset([string[]]$Answers=@()){$state.calls.Clear();$state.prompts.Clear();$state.messages.Clear();$state.readMessageCounts.Clear();$state.events.Clear();$state.reads.Clear();$state.foreign=$false;$state.unpublished=$false;$state.tampered=$false;foreach($a in $Answers){$state.reads.Enqueue($a)}}
 function Run([string]$Action){Invoke-SimpleLauncher -Action $Action -PayloadRoot $repo -Root $root}
 
-Test 'Zero tunnel installation hides external trust plumbing and passes exact literal project' {
+Test 'Zero tunnel installation hides external trust plumbing and passes exact literal workspace as ProjectPath' {
  Reset @('C:/Projects/Example & sibling','n');Run Install
  Assert ($state.prompts.Count -eq 2 -and $state.events[0] -ceq 'trust' -and $state.events[1] -ceq 'verify')
  $c=$state.calls[0];Assert ($c.script -ceq (Join-Path $repo 'Install.ps1') -and $c.parameters.ProjectPath -ceq 'C:/Projects/Example & sibling' -and $c.parameters.NoTunnel -and $c.parameters.TrustedPayloadSha256 -ceq ('a'*64))
  Assert (!$c.parameters.ContainsKey('TunnelRuntimeKey'))
+}
+Test 'Workspace guidance appears before input with one-project and dedicated parent-folder choices' {
+ Reset @('D:\MyGame','n');Run Install
+ Assert ($state.prompts[0] -ceq 'Workspace' -and $state.readMessageCounts[0] -eq 5)
+ Assert ($state.messages[0] -ceq 'Choose your Codexless workspace folder.' -and $state.messages[1] -ceq 'If you use one project, choose that project folder.' -and $state.messages[2] -ceq 'If you use multiple projects, choose a parent folder such as:' -and $state.messages[3] -ceq 'D:\Codexless Work' -and $state.messages[4] -ceq 'Choose a dedicated folder, not a whole drive or your user profile root.')
+ Assert ($state.calls[0].parameters.ProjectPath -ceq 'D:\MyGame' -and $state.prompts.Count -eq 2)
+}
+Test 'Multiple-project parent workspace retains spaces and trailing separator without new backend parameters' {
+ Reset @('D:\Codexless Work\','n');Run Install
+ Assert ($state.calls[0].parameters.ProjectPath -ceq 'D:\Codexless Work\')
+ Assert (($state.calls[0].parameters.Keys|Sort-Object) -join '|' -ceq 'InstallDirectory|NoTunnel|ProjectPath|TrustedPayloadSha256')
+}
+Test 'Workspace docs expose verified uninstall/reinstall instead of an unsupported switch or settings edits' {
+ $readme=[IO.File]::ReadAllText((Join-Path $repo 'README.md'))
+ $guide=[IO.File]::ReadAllText((Join-Path $repo 'docs/PUBLIC-INSTALL.md'))
+ Assert ($readme.Contains('## Choosing a workspace') -and $readme.Contains('D:\Codexless Work\') -and $readme.Contains('MyGame\') -and $readme.Contains('Website\') -and $readme.Contains('BotProject\') -and $readme.Contains('Experiments\'))
+ Assert ($readme.Contains('docs/PUBLIC-INSTALL.md#changing-workspace-after-installation') -and $guide.Contains('## Changing workspace after installation') -and $guide.Contains('Invoke-OwnedUninstall -Root $root -Adapter $adapter'))
+ Assert (!(Test-Path -LiteralPath (Join-Path $repo 'CHANGE-WORKSPACE.cmd')))
 }
 Test 'One tunnel install passes ID and delegates secure runtime-key prompt to qualified backend' {
  Reset @('C:/Projects/Example','y','tunnel_fixture');Run Install
@@ -37,8 +55,8 @@ Test 'One tunnel install passes ID and delegates secure runtime-key prompt to qu
 }
 Test 'Default empty choice selects zero tunnels' {Reset @('C:/Projects/Example','');Run Install;Assert $state.calls[0].parameters.NoTunnel}
 Test 'Unknown install choice refuses before backend mutation' {Reset @('C:/Projects/Example','perhaps');Refuses {Run Install} 'LAUNCHER_CHOICE_INVALID';Assert ($state.calls.Count -eq 0)}
-Test 'Unpublished exact release refuses before configuration prompts or backend' {Reset;$state.unpublished=$true;Refuses {Run Install} 'LAUNCHER_RELEASE_TRUST_UNAVAILABLE';Assert ($state.prompts.Count -eq 0 -and $state.calls.Count -eq 0)}
-Test 'Changed local payload refuses before prompts or backend' {Reset;$state.tampered=$true;Refuses {Run Install} 'LAUNCHER_PAYLOAD_CHANGED';Assert ($state.prompts.Count -eq 0 -and $state.calls.Count -eq 0)}
+Test 'Unpublished exact release refuses before configuration prompts or backend' {Reset;$state.unpublished=$true;Refuses {Run Install} 'LAUNCHER_RELEASE_TRUST_UNAVAILABLE';Assert ($state.prompts.Count -eq 0 -and $state.messages.Count -eq 0 -and $state.calls.Count -eq 0)}
+Test 'Changed local payload refuses before prompts or backend' {Reset;$state.tampered=$true;Refuses {Run Install} 'LAUNCHER_PAYLOAD_CHANGED';Assert ($state.prompts.Count -eq 0 -and $state.messages.Count -eq 0 -and $state.calls.Count -eq 0)}
 foreach($action in @('Start','Stop','Restart','Status','Doctor')){
  Test ($action+' dispatches exact verified installed script without online trust or setup prompts') {
   Reset;Run $action

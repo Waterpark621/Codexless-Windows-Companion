@@ -118,7 +118,12 @@ function Invoke-SimpleLauncher {
     if($Action -ceq 'Install'){
         $digest=& $s.Trust (& $s.Version $PayloadRoot)
         & $s.Verify $PayloadRoot $digest
-        $project=& $s.Read 'Project folder (existing local folder)'
+        & $s.Write 'Choose your Codexless workspace folder.'
+        & $s.Write 'If you use one project, choose that project folder.'
+        & $s.Write 'If you use multiple projects, choose a parent folder such as:'
+        & $s.Write 'D:\Codexless Work'
+        & $s.Write 'Choose a dedicated folder, not a whole drive or your user profile root.'
+        $project=& $s.Read 'Workspace'
         $answer=& $s.Read 'Set up one existing OpenAI tunnel now? [y/N]'
         if([string]$answer -notmatch '^(?i:y|yes|n|no)?$'){throw 'LAUNCHER_CHOICE_INVALID: Enter y or n.'}
         $args=@{ProjectPath=$project;InstallDirectory=$Root;TrustedPayloadSha256=$digest}
