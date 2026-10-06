@@ -11,7 +11,7 @@ $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $powershell=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $passed=0
 function Assert([bool]$Value){if(!$Value){throw 'assertion failed'}}
-function Test([string]$Name,[scriptblock]$Body){& $Body;$script:passed++;Write-Output "PASS $Name"}
+function Test([string]$Name,[scriptblock]$Body){try{& $Body}catch{throw ("FAIL "+$Name+": "+$_.Exception.Message+"; "+$_.ScriptStackTrace)};$script:passed++;Write-Output "PASS $Name"}
 function Save($Name,$Value){$Value | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $script:def.LauncherDirectory $Name) -Encoding utf8}
 function Load($Name){Get-Content -LiteralPath (Join-Path $script:def.LauncherDirectory $Name) -Raw | ConvertFrom-Json}
 function New-Fixture {
@@ -23,7 +23,7 @@ function New-Fixture {
         settingsPath=(Join-Path $folder 'settings.json')
         projectPath=$folder
         release=[pscustomobject]@{version='fixture';buildId=('b'*64);sourceRevision=('c'*40);manifestSha256=('d'*64);hostContractVersion='codexless-public-preview-v1'}
-        port=7690
+        port=7690;mcpUrl='http://127.0.0.1:7690/mcp'
         codexlessRoot=(Join-Path $folder 'release')
         nodeExe='C:\fixture\node.exe';nodeSha256=('a'*64)
         launchScript=(Join-Path $folder 'release\scripts\launch.mjs')
@@ -51,13 +51,15 @@ function New-Fixture {
         $script:boot=[DateTime]::Parse('2026-10-05T04:55:16Z').ToUniversalTime()
         $script:listeners=@();$script:runs=@();$script:processes=@([pscustomobject]@{ProcessId=999;Name='explorer.exe';CommandLine='explorer'})
         $script:status=[pscustomobject]@{alias='fixture';tunnel_id='fixture-registration';process_running=$false}
-        $script:probeFailure='';$script:statusCalls=0;$script:bootCalls=0;$script:changeBoot=$false;$script:changeEvidence=$false;$script:denyDelete=$false;$script:lateChange=''
+        $script:probeFailure='';$script:statusCalls=0;$script:bootCalls=0;$script:changeBoot=$false;$script:changeEvidence=$false;$script:denyDelete=$false;$script:lateChange='';$script:bootTimeouts=0;$script:bootDelays=@()
         function script:Get-CompanionConfig { param($CompanionRoot) $script:cfg }
         function script:Get-ConfiguredTunnels { param($Config,[switch]$IncludeDisabled) if(!$IncludeDisabled){throw 'must include disabled'}; $Config.tunnels }
+        function script:Start-Sleep {param($Milliseconds) $script:bootDelays+=$Milliseconds}
+        function script:Invoke-CimMethod {throw 'FOREIGN_OWNER_QUERY_FORBIDDEN'}
         function script:Get-CimInstance {
             param($ClassName,$OperationTimeoutSec,$ErrorAction)
             if($script:probeFailure -eq 'cim'){throw 'fixture private error'}
-            if($ClassName -eq 'Win32_OperatingSystem'){$script:bootCalls++;if($script:changeBoot -and $script:bootCalls -gt 1){return [pscustomobject]@{LastBootUpTime=$script:boot.AddSeconds(1)}};return [pscustomobject]@{LastBootUpTime=$script:boot}}
+            if($ClassName -eq 'Win32_OperatingSystem'){$script:bootCalls++;if($script:bootCalls -le $script:bootTimeouts){throw [Management.Automation.ErrorRecord]::new([TimeoutException]::new('localized'),'HRESULT 0x40004,Microsoft.Management.Infrastructure.CimCmdlets.GetCimInstanceCommand',[Management.Automation.ErrorCategory]::OperationTimeout,$null)};if($script:changeBoot -and $script:bootCalls -gt 1){return [pscustomobject]@{LastBootUpTime=$script:boot.AddSeconds(1)}};return [pscustomobject]@{LastBootUpTime=$script:boot}}
             $script:processes
         }
         function script:Get-RecoveryListeners { if($script:probeFailure -eq 'listeners'){throw 'fixture private error'}; $script:listeners }
@@ -248,4 +250,94 @@ Test 'Changed collection remains fenced with all original multi-tunnel receipts 
 Test 'PID reuse in any one of multiple profiles prevents ownership recovery' {
     New-MultiFixture;& $module {$script:processes += [pscustomobject]@{ProcessId=123;Name='foreign.exe';CommandLine='unrelated PID reuse'}};Refuses
 }
+
+function Add-Foreign([int]$Id=102,[string]$Name='svchost.exe') {
+    & $module {param($id,$name) $script:processes += [pscustomobject]@{ProcessId=$id;Name=$name;CreationDate=$script:boot.AddSeconds(2);ExecutablePath=$null;CommandLine=$null}} $Id $Name
+}
+function Add-Metadata([string]$Published='2026-10-03T00:00:03Z') {
+    $tunnel=$fixtureCfg.tunnels[0];$context=Get-TunnelRuntimeContext $fixtureCfg $tunnel
+    $record=[pscustomobject]@{alias=$tunnel.alias;tunnel_id=$tunnel.tunnelId;pid=103;mode='process';started_at=$Published;
+        health_url_file=(Join-Path $context.stateRoot 'health\fixture.url');log_path=(Join-Path $context.stateRoot 'logs\fixture.log');
+        profile_dir=$context.profileRoot;profile_name=$tunnel.alias;profile_path=(Join-Path $context.profileRoot 'fixture.yaml');config_path=(Join-Path $context.profileRoot 'fixture.yaml');
+        target_kind='server_url';target_value=$fixtureCfg.mcpUrl;command=("'$($fixtureCfg.tunnelExe)' 'run' '--profile-dir' '$($context.profileRoot)' '--profile' '$($tunnel.alias)'")}
+    & $module {param($record) $script:status | Add-Member NoteProperty process $record; $script:status | Add-Member NoteProperty ready $false} $record
+}
+foreach($id in @(101,102,103)) {
+    Test "Proven prior-boot receipt with protected foreign reused PID $id safely retires without owner query" {
+        New-Fixture;Add-Foreign $id
+        $before=& $module {$script:processes|ConvertTo-Json -Depth 6}
+        Invoke-PriorBootOwnership $def
+        Assert (!(Test-HouseholdOwnershipEvidence $def.LauncherDirectory))
+        Assert ($before -ceq (& $module {$script:processes|ConvertTo-Json -Depth 6}))
+    }
+}
+Test 'Current-boot collision with independently new foreign lifetime remains fenced' {New-Fixture;Add-Foreign;$owner.createdAt='2026-10-05T04:56:00.0000000Z';Save 'task-owner.json' $owner;Refuses}
+foreach($time in @($null,'2026-10-05T04:55:18Z',[DateTime]::SpecifyKind([DateTime]'2026-10-05',[DateTimeKind]::Unspecified),[DateTime]::Parse('2026-10-05T04:55:16Z').ToUniversalTime(),[DateTime]::Parse('2026-10-03T04:55:16Z').ToUniversalTime(),[DateTime]::UtcNow.AddDays(1))) {
+    Test 'Missing untyped unspecified boundary old or future foreign lifetime refuses unchanged' {New-Fixture;Add-Foreign;& $module {param($t)$script:processes[-1].CreationDate=$t} $time;Refuses}
+}
+foreach($foreignName in @('powershell.exe','pwsh.exe','node.exe','cmd.exe','codex.exe','tunnel-client.exe','')) {
+    Test "Production-looking or unknown foreign name '$foreignName' refuses despite new lifetime" {New-Fixture;Add-Foreign 102 $foreignName;Refuses}
+}
+Test 'Duplicate reused PID observation is ambiguous and fenced' {New-Fixture;Add-Foreign;Add-Foreign;Refuses}
+Test 'Foreign reused PID with relevant command refuses' {New-Fixture;Add-Foreign;& $module {$script:processes[-1].CommandLine='other Task-Host.ps1'};Refuses}
+Test 'Foreign reused PID with configured executable refuses' {New-Fixture;Add-Foreign;& $module {$script:processes[-1].ExecutablePath=$script:cfg.nodeExe};Refuses}
+Test 'Protected foreign reuse preflight remains observational' {New-Fixture;Add-Foreign;$before=Snapshot;Invoke-PriorBootOwnership $def -CheckOnly;Assert ($before -ceq (Snapshot))}
+Test 'Valid current receipt is never retired even without a collision' {New-Fixture;$owner.createdAt='2026-10-05T04:56:00.0000000Z';Save 'task-owner.json' $owner;Refuses}
+foreach($publication in @('2026-10-03T00:00:02Z','2026-10-03T00:00:03Z','2026-10-04T23:59:00Z')) {
+    Test "Prior-boot whole-second publication $publication succeeds independently of native creation" {New-Fixture;Add-Metadata $publication;Invoke-PriorBootOwnership $def;Assert (!(Test-HouseholdOwnershipEvidence $def.LauncherDirectory))}
+}
+Test 'Actual fractional creation to next-second publication rollover succeeds' {
+    New-Fixture;$v=Load 'tunnel-owners\fixture.json';$v.createdAt='2026-10-03T00:00:02.927110Z';$v.nativeCreatedAt='2026-10-03T00:00:02.9271107Z';Save 'tunnel-owners\fixture.json' $v
+    Add-Metadata '2026-10-03T00:00:03Z';Invoke-PriorBootOwnership $def;Assert (!(Test-HouseholdOwnershipEvidence $def.LauncherDirectory))
+}
+foreach($publication in @('2026-10-03T00:00:01Z','2026-10-05T04:55:16Z','2026-10-05T04:56:00Z')) {
+    Test 'Publication before creation second or at/after boot refuses' {New-Fixture;Add-Metadata $publication;Refuses}
+}
+Test 'Stale official running projection with protected foreign PID recovers without signalling it' {
+    New-Fixture;Add-Metadata;Add-Foreign 103
+    & $module {$script:status.process_running=$true}
+    $before=& $module {$script:processes|ConvertTo-Json -Depth 6}
+    Invoke-PriorBootOwnership $def
+    Assert (!(Test-HouseholdOwnershipEvidence $def.LauncherDirectory));Assert ($before -ceq (& $module {$script:processes|ConvertTo-Json -Depth 6}))
+}
+foreach($field in @('pid','tunnel_id','profile_dir','profile_path','health_url_file','command','target_value')) {
+    Test "Changed stale tunnel metadata $field refuses" {New-Fixture;Add-Metadata;& $module {param($f) $script:status.process.$f=if($f -eq 'pid'){999}else{'foreign'}} $field;Refuses}
+}
+Test 'Current native process-looking collision refuses even with stale publication' {New-Fixture;Add-Metadata;Add-Foreign 103 'tunnel-client.exe';& $module {$script:status.process_running=$true};Refuses}
+Test 'Old tunnel ledger remains inert and byte-identical; next owner receives a different namespace' {
+    New-Fixture;Add-Metadata
+    $old=Get-TunnelRuntimeContext $fixtureCfg $fixtureCfg.tunnels[0]
+    New-Item -ItemType Directory -Path $old.stateRoot -Force|Out-Null
+    $ledger=Join-Path $old.stateRoot 'processes.yaml';[IO.File]::WriteAllText($ledger,'inert old generation ledger sentinel')
+    $bytes=[IO.File]::ReadAllBytes($ledger)
+    Invoke-PriorBootOwnership $def
+    Assert ([Convert]::ToBase64String($bytes) -ceq [Convert]::ToBase64String([IO.File]::ReadAllBytes($ledger)))
+    $owner.pid=201;$owner.createdAt='2026-10-05T05:00:00.0000000Z';Save 'task-owner.json' $owner
+    $next=Get-TunnelRuntimeContext $fixtureCfg $fixtureCfg.tunnels[0];Assert ($next.stateRoot -cne $old.stateRoot)
+}
+foreach($count in @(1,2)) {
+    Test "Actual Task-Host recovers after $count boot timeouts under existing owner gate" {
+        New-Fixture;& $module {param($c)$script:bootTimeouts=$c} $count;Invoke-TaskHostFixture
+        Assert ($hostMock.recoveries -eq 1 -and (Test-Path -LiteralPath (Join-Path $def.LauncherDirectory 'fixture-host-ran')))
+        Assert (& $module {param($c)$script:bootCalls -eq ($c+2) -and $script:bootDelays.Count -eq $c -and @($script:bootDelays|Where-Object {$_ -ne 500}).Count -eq 0} $count)
+    }
+}
+Test 'Boot retry exhaustion preserves all receipts and fences Task-Host before launch' {
+    New-Fixture;& $module {$script:bootTimeouts=99};$before=Snapshot;Refuses
+    Assert (& $module {$script:bootCalls -eq 3 -and $script:bootDelays.Count -eq 2})
+    Invoke-TaskHostFixture
+    Assert (!(Test-Path -LiteralPath (Join-Path $def.LauncherDirectory 'fixture-host-ran')))
+    Assert (Test-HouseholdOwnershipEvidence $def.LauncherDirectory)
+}
+Test 'Boot readiness retry cannot authorize same-boot owner' {
+    New-Fixture;$owner.createdAt='2026-10-05T05:00:00.0000000Z';Save 'task-owner.json' $owner;& $module {$script:bootTimeouts=1};Refuses
+}
+Test 'Zero-tunnel prior-boot foreign collision recovers using the same proof' {
+    New-Fixture;$fixtureCfg.tunnels=@();Remove-Item -LiteralPath (Join-Path $def.LauncherDirectory 'tunnel-owners\fixture.json');$owner.generationContract=Get-CompanionGenerationContract $fixtureCfg;Save 'task-owner.json' $owner
+    Add-Foreign;Invoke-PriorBootOwnership $def;Assert (!(Test-HouseholdOwnershipEvidence $def.LauncherDirectory))
+}
+Test 'All profiles retain independent proof during multi-tunnel protected collision recovery' {
+    New-MultiFixture;Add-Foreign 123;Invoke-PriorBootOwnership $def;Assert (!(Test-HouseholdOwnershipEvidence $def.LauncherDirectory))
+}
+
 Write-Output ("RESULT: {0}/{0} PASS; fixture receipt I/O only; native observations mocked; no live deployment/task/tunnel actions" -f $passed)

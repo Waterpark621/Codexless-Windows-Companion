@@ -161,7 +161,7 @@ function Get-TaskSchedulerParentIdentity {
     [pscustomobject]@{ pid=$ProcessId; executable=$serviceImage; createdAt=$process.CreationDate.ToUniversalTime().ToString('o'); identitySource='scm'; serviceName=$service.Name; serviceAccount=$service.StartName; serviceState=$service.State; serviceRechecked=$true }
 }
 
-function Get-HouseholdRuntimeState {
+function Get-HouseholdRuntimeStateUnchecked {
     param($Definition)
     $launcher = $Definition.LauncherDirectory
     $cfg = Get-CompanionConfig $launcher
@@ -223,6 +223,37 @@ function Get-HouseholdRuntimeState {
         $tunnels += [pscustomobject]@{ profileId=if($tunnel.PSObject.Properties['profileId']){$tunnel.profileId}else{$tunnel.alias}; enabled=if($tunnel.PSObject.Properties['enabled']){$tunnel.enabled}else{$true}; alias=$tunnel.alias; alive=$alive; ready=($alive -and $status.PSObject.Properties['healthy'] -and $status.healthy -is [bool] -and $status.healthy -and $status.PSObject.Properties['ready'] -and $status.ready -is [bool] -and $status.ready) }
     }
     [pscustomobject]@{ taskState=$taskState; hostPresent=($null -ne $hostIdentity); ownerVerified=$ownerVerified; piecesVerified=$piecesVerified; listenerPresent=$listenerPresent; tunnelPresent=$tunnelPresent; tunnels=$tunnels; cleanupRequired=$cleanupRequired; cleanupState=$cleanupState }
+}
+
+function Get-HouseholdRuntimeState {
+    param($Definition)
+    try { $state=Get-HouseholdRuntimeStateUnchecked $Definition }
+    catch {
+        if ($_.Exception.Message -cne 'PROCESS_OWNER_UNAVAILABLE') { throw }
+        # An unavailable owner is an incomplete observation, never proof of absence.
+        # Preserve every identity check and fence all mutations/recovery as degraded.
+        $task=Get-ScheduledTask -TaskName $Definition.Name -TaskPath '\' -ErrorAction Stop
+        $state=[pscustomobject]@{
+            taskState=$(if($task){[string]$task.State}else{'NotRegistered'}); hostPresent=$null; ownerVerified=$false
+            piecesVerified=$false; listenerPresent=$null; tunnelPresent=$null
+            tunnels=@(); cleanupRequired=$true
+            observationComplete=$false; identityError='PROCESS_OWNER_UNAVAILABLE'
+            cleanupState=[pscustomobject]@{
+                state='degraded'; reasonCode='PROCESS_OWNER_UNAVAILABLE'
+                requiresVerifiedRecovery=$true
+            }
+        }
+    }
+    if ($state.cleanupRequired -and $state.taskState -ne 'Running') {
+        try {
+            # Absence comes from the complete prior-boot proof, never PID mismatch.
+            # Controller Start repeats this read-only proof before scheduling.
+            Invoke-PriorBootOwnership $Definition -CheckOnly
+            $state.hostPresent=$false;$state.listenerPresent=$false;$state.tunnelPresent=$false
+            $state | Add-Member -NotePropertyName priorBootRecoveryAvailable -NotePropertyValue $true
+        } catch { }
+    }
+    $state
 }
 
 function Invoke-WindowsPriorBootRecovery {

@@ -11,7 +11,20 @@ function ConvertTo-ReceiptUtc($Value) {
 }
 
 function Get-WindowsBootUtc {
-    $os = @(Get-CimInstance Win32_OperatingSystem -OperationTimeoutSec 10 -ErrorAction Stop)
+    # The logon owner's boot-provider observation can time out while WMI starts.
+    # Retry only the exact native timeout observed in that owner's event record.
+    # No receipt/ledger mutation occurs here; all typed boot and identity checks
+    # still run after a successful observation, including the final boot recheck.
+    for ($attempt=1; $attempt -le 3; $attempt++) {
+        try {
+            $os = @(Get-CimInstance Win32_OperatingSystem -OperationTimeoutSec 10 -ErrorAction Stop)
+            break
+        } catch {
+            if ($_.FullyQualifiedErrorId -cne 'HRESULT 0x40004,Microsoft.Management.Infrastructure.CimCmdlets.GetCimInstanceCommand') { throw }
+            if ($attempt -eq 3) { throw 'RECOVERY_BOOT_QUERY_TIMEOUT' }
+            Start-Sleep -Milliseconds 500
+        }
+    }
     if ($os.Count -ne 1 -or $os[0].LastBootUpTime -isnot [DateTime] -or $os[0].LastBootUpTime.Kind -eq [DateTimeKind]::Unspecified) { throw 'RECOVERY_BOOT_UNKNOWN' }
     $boot = $os[0].LastBootUpTime.ToUniversalTime()
     if ($boot -gt [DateTime]::UtcNow -or $boot.Year -lt 2000) { throw 'RECOVERY_BOOT_INVALID' }
@@ -100,7 +113,50 @@ function Get-PriorBootEvidence($Definition,$Config,$Tunnels,[DateTime]$Boot) {
             if (!$records.ContainsKey($pair[1]) -or $raw[$pair[0]].Trim() -cne [string]$records[$pair[1]].pid) { throw 'RECOVERY_PID_BINDING_INVALID' }
         }
     }
-    [pscustomobject]@{ raw=$raw; pids=$pids; owner=$owner }
+    [pscustomobject]@{ raw=$raw; pids=$pids; owner=$owner; records=$records; boot=$Boot }
+}
+
+function Assert-RecoveryForeignLifetime($Process,$Evidence,$Definition,$Config) {
+    # No SID query, process handle, signal or adoption. The independently validated
+    # receipt generation is before boot; this PID's typed lifetime is after boot.
+    if ($null -eq $Process -or !$Process.PSObject.Properties['CreationDate'] -or
+        $Process.CreationDate -isnot [DateTime] -or $Process.CreationDate.Kind -eq [DateTimeKind]::Unspecified) { throw 'RECOVERY_REUSED_LIFETIME_UNKNOWN' }
+    $created=$Process.CreationDate.ToUniversalTime()
+    if ($created -le $Evidence.boot -or $created -gt [DateTime]::UtcNow) { throw 'RECOVERY_REUSED_LIFETIME_UNKNOWN' }
+    # A production executable/name conflict is ambiguous even with a newer lifetime.
+    $names=@('powershell.exe','pwsh.exe','node.exe','cmd.exe','codex.exe',[IO.Path]::GetFileName($Config.tunnelExe),[IO.Path]::GetFileName($Config.nodeExe))
+    if ([string]::IsNullOrWhiteSpace([string]$Process.Name) -or $Process.Name -in $names) { throw 'RECOVERY_REUSED_IDENTITY_CONFLICT' }
+    $image=if($Process.PSObject.Properties['ExecutablePath']){[string]$Process.ExecutablePath}else{''}
+    if ($image -ieq $Definition.PowerShellExe -or (![string]::IsNullOrWhiteSpace([string]$Config.tunnelExe) -and $image -ieq $Config.tunnelExe) -or $image -ieq $Config.nodeExe -or
+        $image.StartsWith($Definition.LauncherDirectory+'\',[StringComparison]::OrdinalIgnoreCase)) { throw 'RECOVERY_REUSED_IDENTITY_CONFLICT' }
+    # Protected unrelated images may omit path/command/SID; the non-production
+    # process name plus the new kernel-boot lifetime excludes the recorded owner.
+}
+
+function Assert-RecoveryTunnelMetadata($Config,$Tunnel,$Status,$Evidence) {
+    $name='tunnel-owners\'+$Tunnel.alias+'.json'
+    if (!$Evidence.records.ContainsKey($name)) { throw 'RECOVERY_TUNNEL_RECEIPT_MISSING' }
+    $receipt=$Evidence.records[$name]; $process=$Status.process
+    if ($process.pid -ne $receipt.pid -or $process.alias -cne $Tunnel.alias -or
+        $process.tunnel_id -cne $Tunnel.tunnelId -or $process.mode -cne 'process' -or
+        $process.started_at -cnotmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$') { throw 'RECOVERY_TUNNEL_METADATA_UNKNOWN' }
+    $published=[DateTimeOffset]::ParseExact($process.started_at,"yyyy-MM-dd'T'HH:mm:ss'Z'",[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::AssumeUniversal).UtcDateTime
+    $created=ConvertTo-ReceiptUtc $receipt.createdAt
+    # Connect publishes UTCNow after readiness, and can refresh it on reuse.
+    # Whole-second publication may roll over or be later in the proven prior boot.
+    # Exact CIM/native lifetime and the connect interval remain independent proof.
+    if ($published -ge $Evidence.boot -or $published.AddSeconds(1) -le $created) { throw 'RECOVERY_TUNNEL_METADATA_GENERATION' }
+    $context=Get-TunnelRuntimeContext $Config $Tunnel
+    if ($process.health_url_file -cne (Join-Path $context.stateRoot ('health\'+$Tunnel.alias+'.url')) -or
+        $process.log_path -cne (Join-Path $context.stateRoot ('logs\'+$Tunnel.alias+'.log')) -or
+        $process.profile_dir -cne $context.profileRoot -or $process.profile_name -cne $Tunnel.alias -or
+        $process.profile_path -cne (Join-Path $context.profileRoot ($Tunnel.alias+'.yaml')) -or
+        $process.config_path -cne $process.profile_path -or $process.target_kind -cne 'server_url' -or
+        $process.target_value -cne $Config.mcpUrl -or
+        $process.command -cne ("'$($Config.tunnelExe)' 'run' '--profile-dir' '$($context.profileRoot)' '--profile' '$($Tunnel.alias)'")) { throw 'RECOVERY_TUNNEL_METADATA_BINDING' }
+    # The old namespace derives from this exact owner receipt. Normal startup
+    # derives a fresh namespace from the new owner lifetime; it cannot reuse this
+    # stale ledger. Do not edit the shared default tunnel-client state or run stop.
 }
 
 function Get-RecoveryListeners {
@@ -123,29 +179,40 @@ function Assert-PriorBootAbsence($Definition,$Config,$Tunnels,$Evidence) {
     # failure is not absence; do not use Core's connect probe (which swallows errors).
     $listeners = @(Get-RecoveryListeners)
     if (@($listeners | Where-Object { $_.Port -eq [int]$Config.port }).Count) { throw 'RECOVERY_LISTENER_PRESENT' }
+    $processes = @(Get-CimInstance Win32_Process -OperationTimeoutSec 10 -ErrorAction Stop)
+    if (!$processes.Count) { throw 'RECOVERY_PROCESS_QUERY_EMPTY' }
     $statusPids = @()
     foreach ($tunnel in $Tunnels) {
         $status = Get-RecoveryTunnelStatus $Config $tunnel
-        if ($null -eq $status -or $status.process_running -isnot [bool] -or $status.process_running -or $status.alias -cne $tunnel.alias -or $status.tunnel_id -cne $tunnel.tunnelId) { throw 'RECOVERY_TUNNEL_NOT_ABSENT' }
+        if ($null -eq $status -or $status.process_running -isnot [bool] -or $status.alias -cne $tunnel.alias -or $status.tunnel_id -cne $tunnel.tunnelId) { throw 'RECOVERY_TUNNEL_NOT_ABSENT' }
         if ($status.PSObject.Properties['ready'] -and ($status.ready -isnot [bool] -or $status.ready)) { throw 'RECOVERY_TUNNEL_STATUS_INCONSISTENT' }
         if ($status.PSObject.Properties['process'] -and $null -ne $status.process) {
             $statusPid = 0
             if (![int]::TryParse([string]$status.process.pid,[ref]$statusPid) -or $statusPid -le 0) { throw 'RECOVERY_TUNNEL_STATUS_INCONSISTENT' }
             $statusPids += $statusPid
+            Assert-RecoveryTunnelMetadata $Config $tunnel $status $Evidence
+            $live=@($processes | Where-Object {[int]$_.ProcessId -eq $statusPid})
+            if ($live.Count -gt 1) { throw 'RECOVERY_PROCESS_QUERY_AMBIGUOUS' }
+            if ($live.Count -eq 1) { Assert-RecoveryForeignLifetime $live[0] $Evidence $Definition $Config }
+            if ($status.process_running -and $live.Count -ne 1) { throw 'RECOVERY_TUNNEL_STATUS_INCONSISTENT' }
         }
+        elseif ($status.process_running) { throw 'RECOVERY_TUNNEL_NOT_ABSENT' }
     }
     foreach ($run in @(Get-RecoveryRunValues)) {
         if ($run.name -match 'Codexless' -or $run.value -match 'Codexless') { throw 'RECOVERY_LEGACY_RUN_OWNER' }
     }
-    $processes = @(Get-CimInstance Win32_Process -OperationTimeoutSec 10 -ErrorAction Stop)
-    if (!$processes.Count) { throw 'RECOVERY_PROCESS_QUERY_EMPTY' }
     $tunnelName = if ([string]::IsNullOrWhiteSpace([string]$Config.tunnelExe)) { $null } else { [IO.Path]::GetFileName($Config.tunnelExe) }
     foreach ($process in $processes) {
         $id = [int]$process.ProcessId
-        # Any reused or foreign recorded PID blocks, regardless of lifetime/SID.
-        if ($Evidence.pids -contains $id -or $statusPids -contains $id) { throw 'RECOVERY_RECORDED_PID_PRESENT' }
+        # Independent prior-boot receipt proof plus a current foreign lifetime.
+        if ($Evidence.pids -contains $id -or $statusPids -contains $id) {
+            if (@($processes | Where-Object {[int]$_.ProcessId -eq $id}).Count -ne 1) { throw 'RECOVERY_PROCESS_QUERY_AMBIGUOUS' }
+            Assert-RecoveryForeignLifetime $process $Evidence $Definition $Config
+        }
         if ($id -eq $PID) { continue }
         if ($null -ne $tunnelName -and $process.Name -ieq $tunnelName) { throw 'RECOVERY_TUNNEL_PROCESS_PRESENT' }
+        $image=if($process.PSObject.Properties['ExecutablePath']){[string]$process.ExecutablePath}else{''}
+        if ($image -ieq $Config.nodeExe -or (![string]::IsNullOrWhiteSpace([string]$Config.tunnelExe) -and $image -ieq $Config.tunnelExe)) { throw 'RECOVERY_RELEVANT_PROCESS_PRESENT' }
         $command = [string]$process.CommandLine
         if ([string]::IsNullOrWhiteSpace($command)) {
             if ($process.Name -in @('powershell.exe','pwsh.exe','node.exe','codex.exe','cmd.exe')) { throw 'RECOVERY_PROCESS_UNREADABLE' }
@@ -156,7 +223,7 @@ function Assert-PriorBootAbsence($Definition,$Config,$Tunnels,$Evidence) {
             $needles=@($Definition.LauncherDirectory,(Split-Path $Definition.HostScript),$Config.codexlessRoot,$Config.nodeExe,$Config.launchScript)
             if (![string]::IsNullOrWhiteSpace([string]$Config.tunnelExe)) { $needles += [string]$Config.tunnelExe }
             foreach ($needle in $needles) {
-                if (![string]::IsNullOrWhiteSpace([string]$needle) -and $command.IndexOf([string]$needle,[StringComparison]::OrdinalIgnoreCase) -ge 0) { throw 'RECOVERY_RELEVANT_PROCESS_PRESENT' }
+                if (![string]::IsNullOrWhiteSpace([string]$needle) -and ($command.IndexOf([string]$needle,[StringComparison]::OrdinalIgnoreCase) -ge 0 -or $image.IndexOf([string]$needle,[StringComparison]::OrdinalIgnoreCase) -ge 0)) { throw 'RECOVERY_RELEVANT_PROCESS_PRESENT' }
             }
             if ($command -match '(?i)codexless|Task-Host\.ps1|Household-Host\.ps1|launch\.mjs["\s]+http') { throw 'RECOVERY_RELEVANT_PROCESS_PRESENT' }
         }
