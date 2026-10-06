@@ -4,6 +4,7 @@ $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 Import-Module (Join-Path $repo 'MutationLock.psm1') -Force
 Import-Module (Join-Path $repo 'WindowsTaskAdapter.psm1') -Force
 Import-Module (Join-Path $repo 'UserSessionTask.psm1') -Force
+Import-Module (Join-Path $repo 'CompanionRuntime.psm1') -Force
 $fixture=Join-Path $PSScriptRoot ('.fixtures\mutation-exclusion-'+[Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $fixture -Force|Out-Null
 $root=Join-Path $fixture 'root';New-Item -ItemType Directory -Path $root|Out-Null
@@ -46,6 +47,14 @@ try {
  $baseline=$false
  try{Invoke-CompanionMutationLocked $root {throw 'entered'}}catch{$baseline=$_.Exception.Message -like 'MUTATION_CONCURRENT_OPERATION*'}
  if(!$baseline){throw 'test precondition: second process does not own shared lock'}
+ $fixtureOwner=[pscustomobject]@{pid=101;createdAt='2026-10-03T00:00:00.0000000Z';userSid='S-1-5-21-111-222-333-1001'}
+ $fixtureOwner|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $root 'task-owner.json')
+ '101'|Set-Content -LiteralPath (Join-Path $root 'host.pid')
+ Check-Exclusion 'Exported cleanup marker writer respects root mutation lock' {Write-HouseholdCleanupState $root 'task-host' 101} {Test-Path -LiteralPath (Join-Path $root 'household-cleanup-state.json')}
+ Check-Exclusion 'Exported owner tracking retirement respects root mutation lock' {Complete-HouseholdOwnerTracking $root $fixtureOwner $true} {!(Test-Path -LiteralPath (Join-Path $root 'task-owner.json'))}
+ $cfg=[pscustomobject]@{companionRoot=$root;tunnelExe=$exe};$tunnel=[pscustomobject]@{alias='fixture';tunnelId='fixture-only'}
+ Check-Exclusion 'Exported native tunnel stop respects root mutation lock' {Invoke-TunnelNative $cfg $tunnel @('runtimes','stop','fixture','--json')} {$false}
+ Check-Exclusion 'Exported tunnel connect respects root mutation lock' {Connect-TunnelRuntime $cfg $tunnel 'fixture-only-key'} {$false}
  $windows=New-WindowsTaskAdapter $definition
  Check-Exclusion 'Native adapter stop callback respects root mutation lock' {& $windows.RequestGracefulStop} {Test-Path -LiteralPath (Join-Path $root 'stop.flag')}
  $state=[pscustomobject]@{started=$false}

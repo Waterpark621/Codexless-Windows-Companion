@@ -16,6 +16,7 @@ try{
   [IO.File]::WriteAllText((Join-Path $LauncherDirectory 'admitted.flag'),'phase-and-generation-refused;exact-startup-admitted')
   $deadline=[DateTime]::UtcNow.AddSeconds(25)
   while(!(Test-Path -LiteralPath (Join-Path $LauncherDirectory 'release.flag'))){if([DateTime]::UtcNow -ge $deadline){throw 'probe timeout'};Start-Sleep -Milliseconds 50}
+  if(Test-Path -LiteralPath (Join-Path $LauncherDirectory 'interrupt.flag')){[Environment]::Exit(73)}
   Start-Sleep -Milliseconds 1000
   [IO.File]::WriteAllText((Join-Path $LauncherDirectory 'completed.flag'),'completed')
  }finally{$lease.Dispose()}

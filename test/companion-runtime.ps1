@@ -399,7 +399,7 @@ Test 'Tunnel connect uses bounded argv and child-only environment key reference'
      [pscustomobject]@{Ok=$true;Stdout='fixture-output';ProcessId=900;CreatedAt='fixture';ExitedAt='fixture'}
    }
  } $root
- $cfg=[pscustomobject]@{tunnelExe='C:\fixture\tunnel-client.exe';mcpUrl='http://127.0.0.1:17690/mcp'};$t=[pscustomobject]@{alias='fixture';tunnelId='fixture-id'}
+ $cfg=[pscustomobject]@{companionRoot=$root;tunnelExe='C:\fixture\tunnel-client.exe';mcpUrl='http://127.0.0.1:17690/mcp'};$t=[pscustomobject]@{alias='fixture';tunnelId='fixture-id'}
  $env:CONTROL_PLANE_API_KEY='fixture-ambient'
  try{$v=Connect-TunnelRuntime $cfg $t 'fixture-secret';Assert ($v.Ok -and !$v.Stdout -and $env:CONTROL_PLANE_API_KEY -ceq 'fixture-ambient')}finally{Remove-Item Env:CONTROL_PLANE_API_KEY -ErrorAction SilentlyContinue}
 }

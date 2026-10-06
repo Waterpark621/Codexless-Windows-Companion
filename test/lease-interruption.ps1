@@ -26,7 +26,14 @@ try{
  $marker=Join-Path $base ('.codexless-mutation-'+$digest+'.lock')
  try{Invoke-CompanionMutationLocked $root {throw 'fixture failure'}}catch{if($_.Exception.Message -cne 'fixture failure'){throw}}
  Assert (!(Test-Path -LiteralPath $marker));Pass 'ordinary scoped failure releases exact lock and marker'
- Invoke-CompanionMutationLocked $root {([Codexless.MutationAdmission]::Controller($digest)).Poisoned=$true}
+ Invoke-CompanionMutationLocked $root {
+  ([Codexless.MutationAdmission]::Controller($digest)).Poisoned=$true
+  foreach($call in @({Assert-CompanionMutationHeld $root},{Invoke-CompanionResourceMutation $root {throw 'unsafe resource entry'}})){
+   $refused=$false;try{& $call}catch{$refused=$_.Exception.Message -ceq 'MUTATION_LEASE_POISONED'}
+   Assert $refused
+  }
+  Pass 'poisoned controller cannot invoke direct native or resource mutations'
+ }
  Assert (Test-Path -LiteralPath $marker)
  $blocked=$false;try{Invoke-CompanionMutationLocked $root {throw 'unsafe entry'}}catch{$blocked=$_.Exception.Message -like 'MUTATION_LOCK_ABANDONED*'}
  Assert $blocked;Pass 'uncertain delegated drain preserves durable fence and denies all subsequent mutation'

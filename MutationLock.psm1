@@ -104,7 +104,7 @@ namespace Codexless {
  }
  public sealed class DelegatedHostServer : IDisposable {
   readonly string name,expectedCommand,expectedExe,sid; readonly int parent; readonly RootMutationLease controller;
-  readonly object sync=new object(); Thread worker; NamedPipeServerStream pipe; bool closing,active; Exception failure;
+  readonly object sync=new object(); Thread worker; NamedPipeServerStream pipe; Process admittedPeer; bool closing,active; Exception failure;
   public readonly string Phase;
   public string PipeName {get{return name;}}
   public DelegatedHostServer(RootMutationLease owner,string exe,string arguments,string userSid,int schedulerPid,string phase){
@@ -129,7 +129,10 @@ namespace Codexless {
       string cmd=Convert.ToString(obj["CommandLine"]);
       if(cmd!="\""+expectedExe+"\" "+expectedCommand && cmd!=expectedExe+" "+expectedCommand)return false;
       string peer=null;p.RunAsClient(()=>peer=WindowsIdentity.GetCurrent().User.Value);
-      return peer==sid && !process.HasExited;
+      if(peer!=sid || process.HasExited)return false;
+      if(admittedPeer!=null)return !admittedPeer.HasExited && admittedPeer.Id==process.Id && admittedPeer.StartTime==process.StartTime;
+      admittedPeer=Process.GetProcessById(process.Id);var retained=admittedPeer.Handle;
+      return !admittedPeer.HasExited && admittedPeer.StartTime==process.StartTime;
      }
     }
    }
@@ -156,6 +159,7 @@ namespace Codexless {
    // No controller mutation may resume while any admitted host scope remains.
    if(!worker.Join(120000)){controller.Poisoned=true;throw new IOException("MUTATION_DELEGATE_DRAIN_TIMEOUT");}
    if(pipe!=null){pipe.Dispose();pipe=null;}
+   if(admittedPeer!=null){admittedPeer.Dispose();admittedPeer=null;}
    if(failure!=null){controller.Poisoned=true;throw new IOException("MUTATION_DELEGATE_INTERRUPTED",failure);}
   }
  }
@@ -171,8 +175,8 @@ namespace Codexless {
     controller=Process.GetProcessById(controllerPid);var held=controller.Handle;
     if(controller.StartTime.ToUniversalTime().Ticks!=ticks||controller.HasExited)throw new IOException("MUTATION_DELEGATE_OWNER_INVALID");
     pipe.WriteByte(1);pipe.Flush();
-    var read=pipe.ReadAsync(new byte[1],0,1);
-    if(!read.Wait(5000)||read.Result!=1)throw new IOException("MUTATION_DELEGATE_REFUSED");
+    var grant=new byte[1];var read=pipe.ReadAsync(grant,0,1);
+    if(!read.Wait(5000)||read.Result!=1||grant[0]!=1)throw new IOException("MUTATION_DELEGATE_REFUSED");
     if(controller.HasExited)throw new IOException("MUTATION_DELEGATE_OWNER_EXITED");
     MutationAdmission.HostEnter(digest);entered=true;
    }catch{if(pipe!=null)pipe.Dispose();if(controller!=null)controller.Dispose();throw;}
@@ -189,7 +193,9 @@ namespace Codexless {
 function Assert-CompanionMutationHeld {
     param([string]$Root)
     $digest=Get-CompanionMutationRootDigest $Root
-    if($null -eq [Codexless.MutationAdmission]::Controller($digest)){throw 'MUTATION_LEASE_REQUIRED'}
+    $controller=[Codexless.MutationAdmission]::Controller($digest)
+    if($null -eq $controller){throw 'MUTATION_LEASE_REQUIRED'}
+    if($controller.Poisoned){throw 'MUTATION_LEASE_POISONED'}
 }
 
 function Invoke-CompanionMutationLocked {
@@ -212,6 +218,8 @@ function Invoke-CompanionMutationLocked {
 function Invoke-CompanionResourceMutation {
     param([string]$Root,[scriptblock]$Body)
     $digest=Get-CompanionMutationRootDigest $Root
+    $controller=[Codexless.MutationAdmission]::Controller($digest)
+    if($controller -and $controller.Poisoned){throw 'MUTATION_LEASE_POISONED'}
     if([Codexless.MutationAdmission]::Admitted($digest)){return & $Body}
     Invoke-CompanionMutationLocked $Root $Body
 }

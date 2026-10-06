@@ -147,7 +147,7 @@ function Test-TaskSchedulerAncestry {
      $ScheduleService.ProcessId -eq $Parent.pid -and $Parent.executable -ieq (Join-Path $SystemDirectory 'svchost.exe'))
 }
 
-function Write-HouseholdCleanupState {
+function Write-HouseholdCleanupStateCore {
     param([string]$LauncherDirectory,
         [ValidateSet('supervision','tunnel-stop','tunnel-wait','console-stop','listener-check','task-host')][string]$Stage,
         [int]$OwnerPid)
@@ -195,7 +195,7 @@ function Get-HouseholdCleanupState {
     }
 }
 
-function Complete-HouseholdOwnerTracking {
+function Complete-HouseholdOwnerTrackingCore {
     param([string]$LauncherDirectory,$Identity,[bool]$CleanupCompleted)
     # A write failure must not turn exceptional cleanup into apparent success.
     if (!$CleanupCompleted) { return }
@@ -214,6 +214,17 @@ function Complete-HouseholdOwnerTracking {
     Remove-Item -LiteralPath $receiptFile -ErrorAction Stop
 }
 
+function Write-HouseholdCleanupState {
+    param([string]$LauncherDirectory,
+        [ValidateSet('supervision','tunnel-stop','tunnel-wait','console-stop','listener-check','task-host')][string]$Stage,
+        [int]$OwnerPid)
+    Invoke-CompanionResourceMutation $LauncherDirectory {Write-HouseholdCleanupStateCore $LauncherDirectory $Stage $OwnerPid}
+}
+function Complete-HouseholdOwnerTracking {
+    param([string]$LauncherDirectory,$Identity,[bool]$CleanupCompleted)
+    if(!$CleanupCompleted){return}
+    Invoke-CompanionResourceMutation $LauncherDirectory {Complete-HouseholdOwnerTrackingCore $LauncherDirectory $Identity $CleanupCompleted}
+}
 function Invoke-HouseholdLifecycleCore {
     # 30s tunnel wait + 60s console wait + bounded helper/observation margin.
     param([ValidateSet('Register','Start','Stop','Restart','Status')] [string]$Action, $Definition, [hashtable]$Adapter, [ValidateRange(1,600)][int]$TimeoutSeconds=120)

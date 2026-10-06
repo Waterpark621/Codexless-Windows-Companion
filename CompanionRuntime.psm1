@@ -1,5 +1,6 @@
 Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot 'BoundedNative.psm1')
+Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1')
 Import-Module (Join-Path $PSScriptRoot 'ArtifactProvenance.psm1')
 
 $script:SupportedHostContractVersion = 'codexless-public-preview-v1'
@@ -350,7 +351,7 @@ function Get-TunnelRuntimeContext($Config,$Tunnel) {
     }catch{throw 'TUNNEL_GENERATION_CONTEXT_INVALID'}
 }
 
-function Invoke-TunnelNative($Config,$Tunnel,[string[]]$Arguments,[int]$TimeoutMs=5000,[string]$PlainKey,[string]$StateRoot,[IntPtr]$GuardHandle=[IntPtr]::Zero) {
+function Invoke-TunnelNativeCore($Config,$Tunnel,[string[]]$Arguments,[int]$TimeoutMs=5000,[string]$PlainKey,[string]$StateRoot,[IntPtr]$GuardHandle=[IntPtr]::Zero) {
     $context=Get-TunnelRuntimeContext $Config $Tunnel
     $policy=Get-ArtifactPolicy tunnel
     $environment=@{TUNNEL_CLIENT_STATE_DIR=$context.stateRoot;TUNNEL_CLIENT_PROFILE_DIR=$context.profileRoot}
@@ -379,7 +380,7 @@ function Test-TunnelReady {
     ($null -ne $status -and $status.process_running -eq $true -and $status.PSObject.Properties['healthy'] -and $status.healthy -is [bool] -and $status.healthy -and $status.PSObject.Properties['ready'] -and $status.ready -is [bool] -and $status.ready -and $status.tunnel_id -ceq $Tunnel.tunnelId)
 }
 
-function Connect-TunnelRuntime {
+function Connect-TunnelRuntimeCore {
     param($Config,$Tunnel,[string]$PlainKey)
     if ($null -eq $Config.tunnelExe -or [string]::IsNullOrWhiteSpace($PlainKey)) { throw 'TUNNEL_CONNECT_INVALID' }
     $context=Get-TunnelRuntimeContext $Config $Tunnel
@@ -392,6 +393,18 @@ function Connect-TunnelRuntime {
     } finally { $PlainKey=$null }
 }
 
+function Invoke-TunnelNative($Config,$Tunnel,[string[]]$Arguments,[int]$TimeoutMs=5000,[string]$PlainKey,[string]$StateRoot,[IntPtr]$GuardHandle=[IntPtr]::Zero) {
+    # Only the exact status query is observational. Arbitrary native argv never
+    # becomes an unlocked route to connect/stop or another mutating command.
+    if($Arguments.Count -eq 4 -and $Arguments[0] -ceq 'runtimes' -and $Arguments[1] -ceq 'status' -and $Arguments[2] -ceq [string]$Tunnel.alias -and $Arguments[3] -ceq '--json'){
+        return Invoke-TunnelNativeCore $Config $Tunnel $Arguments $TimeoutMs $PlainKey $StateRoot $GuardHandle
+    }
+    Invoke-CompanionResourceMutation $Config.companionRoot {Invoke-TunnelNativeCore $Config $Tunnel $Arguments $TimeoutMs $PlainKey $StateRoot $GuardHandle}
+}
+function Connect-TunnelRuntime {
+    param($Config,$Tunnel,[string]$PlainKey)
+    Invoke-CompanionResourceMutation $Config.companionRoot {Connect-TunnelRuntimeCore $Config $Tunnel $PlainKey}
+}
 function Write-CompanionLog {
     param([string]$CompanionRoot,[string]$Message)
     $logDir=Join-Path $CompanionRoot 'logs'
