@@ -3,7 +3,8 @@ param(
     [string]$ReportPath,
     [Parameter(Mandatory=$true)][string]$LocalCandidateRoot,
     [Parameter(Mandatory=$true)][string]$QualifiedTunnelExe,
-    [string]$QualifiedNodeExe
+    [string]$QualifiedNodeExe,
+    [string]$NativeFixtureBase
 )
 
 $ErrorActionPreference='Stop'
@@ -233,7 +234,7 @@ try {
     Invoke-Case 'unique_disposable_scheduler_duplicate_start' 'windows-live' {Invoke-LiveSchedulerProbe} 'UNIQUE_TASK_COOPERATIVE_LIFECYCLE'
 
     $nativeReport=Join-Path $fixtureRoot 'native-report.json'
-    & powershell.exe -NoProfile -File (Join-Path $PSScriptRoot 'native-disposable-acceptance.ps1') -CandidateRoot $LocalCandidateRoot -ReportPath $nativeReport -QualifiedTunnelExe $QualifiedTunnelExe -QualifiedNodeExe $QualifiedNodeExe
+    & powershell.exe -NoProfile -File (Join-Path $PSScriptRoot 'native-disposable-acceptance.ps1') -CandidateRoot $LocalCandidateRoot -ReportPath $nativeReport -QualifiedTunnelExe $QualifiedTunnelExe -QualifiedNodeExe $QualifiedNodeExe -FixtureBase $NativeFixtureBase
     $nativeExit=$LASTEXITCODE
     if(Test-Path -LiteralPath $nativeReport){
         $native=Get-Content -LiteralPath $nativeReport -Raw|ConvertFrom-Json
