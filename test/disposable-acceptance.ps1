@@ -2,7 +2,8 @@
 param(
     [string]$ReportPath,
     [Parameter(Mandatory=$true)][string]$LocalCandidateRoot,
-    [Parameter(Mandatory=$true)][string]$QualifiedTunnelExe
+    [Parameter(Mandatory=$true)][string]$QualifiedTunnelExe,
+    [string]$QualifiedNodeExe
 )
 
 $ErrorActionPreference='Stop'
@@ -232,7 +233,7 @@ try {
     Invoke-Case 'unique_disposable_scheduler_duplicate_start' 'windows-live' {Invoke-LiveSchedulerProbe} 'UNIQUE_TASK_COOPERATIVE_LIFECYCLE'
 
     $nativeReport=Join-Path $fixtureRoot 'native-report.json'
-    & powershell.exe -NoProfile -File (Join-Path $PSScriptRoot 'native-disposable-acceptance.ps1') -CandidateRoot $LocalCandidateRoot -ReportPath $nativeReport -QualifiedTunnelExe $QualifiedTunnelExe
+    & powershell.exe -NoProfile -File (Join-Path $PSScriptRoot 'native-disposable-acceptance.ps1') -CandidateRoot $LocalCandidateRoot -ReportPath $nativeReport -QualifiedTunnelExe $QualifiedTunnelExe -QualifiedNodeExe $QualifiedNodeExe
     $nativeExit=$LASTEXITCODE
     if(Test-Path -LiteralPath $nativeReport){
         $native=Get-Content -LiteralPath $nativeReport -Raw|ConvertFrom-Json
@@ -248,7 +249,8 @@ try {
         foreach($line in $lines){if([string]$line -match '^PASS '){$index++;Add-Result ($suite+'_'+$index) PASS 'REAL_DISPOSABLE_REGRESSION' $suite}}
         if($exitCode -ne 0 -or $index -eq 0){Add-Result $suite FAIL 'REGRESSION_PROCESS_FAILED' $suite}
     }
-    Add-Result 'published_codexless_fresh_install_start_status_doctor' BLOCKED_UNPUBLISHED_ARTIFACT 'QUALIFIED_CODEXLESS_UNPUBLISHED' 'published-artifact'
+    $publishedInstall=@($native.results|Where-Object name -ceq 'fresh_install_through_public_entrypoint')
+    if($publishedInstall.Count -eq 1 -and $publishedInstall[0].status -ceq 'PASS'){Add-Result 'published_codexless_fresh_install_start_status_doctor' PASS 'REAL_PUBLISHED_DOWNLOAD_NATIVE_INSTALL_BROWSER_FIXTURE' 'published-artifact'}else{Add-Result 'published_codexless_fresh_install_start_status_doctor' FAIL 'PUBLISHED_INSTALL_NOT_PROVEN' 'published-artifact'}
     Add-Result 'remote_tunnel_connect_acceptance' SKIP_EXTERNAL 'REQUIRES_SEPARATE_DISPOSABLE_BACKEND_AND_NONPRODUCTION_CREDENTIALS' 'external-backend'
 }
 finally {

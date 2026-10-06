@@ -9,9 +9,12 @@ $passed=0
 function Assert([bool]$value){if(!$value){throw 'assertion failed'}}
 function Test([string]$name,[scriptblock]$body){& $body;$script:passed++;Write-Output "PASS $name"}
 
-Test 'Unpublished production binding exposes exact remaining publication fields' {
+Test 'Published distribution binds the exact qualified release asset' {
     $binding=Get-CodexlessDistributionBinding
-    Assert ($binding.state -ceq 'unpublished')
+    Assert ($binding.state -ceq 'published')
+    Assert ($binding.url -ceq 'https://github.com/Waterpark621/Codexless/releases/download/v0.1.2-preview.1/codexless-0.1.2-preview.1-windows-x64.zip')
+    Assert ($binding.archiveFileName -ceq 'codexless-0.1.2-preview.1-windows-x64.zip')
+    Assert ($binding.sha256 -ceq '519d05d0b4ed69a19083aa71f5d9884aebf8bfafae203464fd7294c5680fd8c1')
     Assert ($binding.version -ceq '0.1.2-preview.1')
     Assert ($binding.candidateHead -ceq 'f31549b635090acc78627e1fe2db7e8419dcd7b8')
     Assert ($binding.buildId -ceq '15a17579c9c78448bbbd9af5a6589b1817dbf2fbae968cea7ff16a2fe4837898')
@@ -20,11 +23,16 @@ Test 'Unpublished production binding exposes exact remaining publication fields'
     Assert ((@($binding.publicationRequiredFields) -join '|') -ceq 'state=published|url|archiveFileName|sha256')
 }
 Test 'Unbound Codexless distribution refuses before staging mutation' {
+    $unpublished=Get-CodexlessDistributionBinding
+    $unpublished.state='unpublished';$unpublished.url=$null;$unpublished.archiveFileName=$null;$unpublished.sha256=$null
+    & $module {param($p) $script:UnpublishedFixture=$p;function script:Get-CodexlessDistributionBinding {$script:UnpublishedFixture}} $unpublished
     $dest=Join-Path $root 'unbound-stage'
     $failed=$false
     try{Stage-QualifiedCodexlessDistribution $dest|Out-Null}catch{$failed=$_.Exception.Message -like 'PROVENANCE_POLICY_UNBOUND:*'}
     Assert $failed
     Assert (!(Test-Path -LiteralPath $dest))
+    Import-Module (Join-Path $PSScriptRoot '../ArtifactProvenance.psm1') -Force
+    $script:module=Get-Module ArtifactProvenance
 }
 Test 'Synthetic Codexless GitHub release redirect is bounded to official asset CDN' {
     $p=[pscustomobject]@{role='codexless';url='https://github.com/Waterpark621/Codexless/releases/download/fixture/fixture.zip'}
@@ -162,9 +170,9 @@ Test 'Codexless policy contains no machine-local URL or path' {
     $policyPath=Join-Path $PSScriptRoot '..\ARTIFACT-POLICY.json'
     $raw=Get-Content -LiteralPath $policyPath -Raw
     $policy=$raw|ConvertFrom-Json
-    Assert ($null -eq $policy.codexless.url -and $null -eq $policy.codexless.archiveFileName -and $null -eq $policy.codexless.sha256)
+    Assert ($policy.codexless.state -ceq 'published' -and $policy.codexless.url.StartsWith('https://github.com/Waterpark621/Codexless/releases/download/v0.1.2-preview.1/'))
     Assert ($raw -notmatch '(?i)(?:file://|localhost|127\.0\.0\.1|[A-Z]:\\)')
 }
 
 Remove-Item -LiteralPath $root -Recurse -Force
-Write-Output ("RESULT: {0}/{0} PASS; local synthetic Codexless archives only; no public artifact invented or downloaded" -f $passed)
+Write-Output ("RESULT: {0}/{0} PASS; local synthetic Codexless archives only; synthetic negative cases plus exact published policy binding" -f $passed)

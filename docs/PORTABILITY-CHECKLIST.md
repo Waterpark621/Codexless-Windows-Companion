@@ -39,12 +39,12 @@
 - [x] Qualify the pinned Node executable and official tunnel-client version/provenance locally.
 - [x] Pin the official Node 24.12.0 Windows x64 archive and implement verified, bounded staging with safe ZIP extraction.
 - [x] Select and qualify the portable tunnel-client distribution/version/archive checksum.
-- [ ] Bind the exact published Codexless download artifact; the qualified local candidate remains unpublished.
+- [x] Bind the exact published Codexless download artifact, including release identity and archive SHA-256.
 - [x] Qualify exact fresh-generation managed tunnel launch, bounded status and guarded official stop.
 - [x] Add bounded native tunnel status/connect/stop execution.
 - [x] Add internal staged transaction engines, incomplete fences and ownership-verified adapter contracts.
 - [x] Add a same-machine disposable acceptance harness with unique roots, ports and task identity plus sanitized machine-readable reporting; this is not different-machine acceptance.
-- [x] Wire the real package/task/provenance adapter into isolated native acceptance using the exact unpublished local candidate.
+- [x] Wire the real package/task/provenance adapter into isolated native acceptance using the exact qualified published distribution.
 - [ ] Publish and bind the exact Codexless archive before distributing the friend installer. External acceptance remains pending separately.
 - [x] Add update + rollback transaction: detect -> stage -> verify -> stop -> promote -> restart -> rollback on failure.
 - [x] Add download/provenance flow and archive checksum verification for qualified binaries.

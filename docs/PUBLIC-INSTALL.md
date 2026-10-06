@@ -2,23 +2,23 @@
 
 Use Windows PowerShell 5.1, a normal interactive Windows x64 user, and the extracted authenticated Companion release ZIP. Administrator credentials and admin API keys are not part of this flow. Windows security policy must permit the existing least-privilege per-user Scheduled Task and qualified runtime. Doctor requires a supported connected Browser backend; it never treats a missing backend as success.
 
-The current Codexless policy is intentionally `unpublished`. Publication must supply its immutable HTTPS archive URL, exact filename, archive SHA-256 and `state=published`. Frozen manifest/build/source identity is already bound to the qualified clean Codexless candidate. The installer refuses incomplete metadata, including when an offline archive is supplied. It never uses upstream HEAD or an unverified source directory.
+The published policy pins the supported Codexless 0.1.2-preview.1 Windows x64 release ZIP, filename and SHA-256. Frozen manifest/build/source identity is independently bound. The installer still refuses unpublished or incomplete metadata, including when an offline archive is supplied. It never uses upstream HEAD or a GitHub source archive.
 
 Copy the externally trusted **payload tree SHA-256** from the authenticated Companion release notes. This differs from the ZIP SHA-256: the ZIP checksum validates the downloaded ZIP, and the payload tree digest validates every extracted Companion file before and after staging. Do not compute an expected digest from an untrusted extraction and feed it back as authority. Extra/missing/modified extracted files fail verification.
 
 ```powershell
 $trustedPayload = '<payload-tree-sha256-from-authenticated-release-notes>'
-.Install.ps1 -ProjectPath 'C:ProjectsExample' -TrustedPayloadSha256 $trustedPayload -NoTunnel
+./Install.ps1 -ProjectPath 'C:/Projects/Example' -TrustedPayloadSha256 $trustedPayload -NoTunnel
 ```
 
-The destination defaults to `$env:LOCALAPPDATACodexlessCompanion`. An existing parent and disjoint fully qualified local project/install/payload roots are required; UNC, drive roots, overlaps and reparse traversal are refused. `-InstallDirectory` and `-Port` accept destination-local choices. `-NodeExe` may select only the exact pinned Node executable; the verified official Node archive still supplies npm. `-CodexlessArchivePath` supplies an offline archive with the exact published hash and release identity. `-CodexlessRoot` remains an input only for the non-mutating `-PlanOnly` planner.
+The destination defaults to `(Join-Path $env:LOCALAPPDATA 'CodexlessCompanion')`. An existing parent and disjoint fully qualified local project/install/payload roots are required; UNC, drive roots, overlaps and reparse traversal are refused. `-InstallDirectory` and `-Port` accept destination-local choices. `-NodeExe` may select only the exact pinned Node executable; the verified official Node archive still supplies npm. `-CodexlessArchivePath` supplies an offline archive with the exact published hash and release identity. `-CodexlessRoot` remains an input only for the non-mutating `-PlanOnly` planner.
 
 With no tunnel inputs, installation uses zero tunnels. For one existing remote tunnel:
 
 ```powershell
 $key = Read-Host 'Runtime API key' -AsSecureString
 try {
-  .Install.ps1 -ProjectPath 'C:ProjectsExample' -TrustedPayloadSha256 $trustedPayload `
+  ./Install.ps1 -ProjectPath 'C:/Projects/Example' -TrustedPayloadSha256 $trustedPayload `
     -TunnelId 'tunnel_example' -TunnelAlias 'default' -TunnelRuntimeKey $key
 } finally { $key.Dispose(); $key = $null }
 ```

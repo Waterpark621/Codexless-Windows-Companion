@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$CandidateRoot,[string]$ReportPath,[string]$FixtureBase,[string]$QualifiedTunnelExe)
+param([Parameter(Mandatory=$true)][string]$CandidateRoot,[string]$ReportPath,[string]$FixtureBase,[string]$QualifiedTunnelExe,[string]$QualifiedNodeExe)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -39,6 +39,7 @@ $taskName='Codexless-NativeAdapter-Test-'+$run
 $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $exe=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $node=(Get-Command node.exe).Source
+$script:RuntimeRoot=$CandidateRoot
 $listener=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,0);$listener.Start();$port=$listener.LocalEndpoint.Port;$listener.Stop()
 foreach($file in Get-ChildItem -LiteralPath $repo -File|Where-Object {$_.Extension -in @('.ps1','.psm1','.mjs','.json') -or $_.Name -eq 'VERSION'}){
  Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $payload $file.Name)
@@ -48,7 +49,7 @@ foreach($file in Get-ChildItem -LiteralPath $repo -File|Where-Object {$_.Extensi
 [IO.File]::WriteAllText((Join-Path $candidate 'candidate-marker.txt'),'candidate two')
 $d1=Get-TransactionTreeDigest $payload;$d2=Get-TransactionTreeDigest $candidate
 function New-AcceptanceAdapter([string]$root){
-$result=& $nativeCommand0 -Root $root -ProjectPath $project -CodexlessRoot $CandidateRoot -NodeExe $node -Port $port -TrustedPayloadSha256 @($d1,$d2) -DisposableTaskName $taskName -ReadyTimeoutSeconds 60
+$result=& $nativeCommand0 -Root $root -ProjectPath $project -CodexlessRoot $script:RuntimeRoot -NodeExe $node -Port $port -TrustedPayloadSha256 @($d1,$d2) -DisposableTaskName $taskName -ReadyTimeoutSeconds 60
 $registerNative=$result.RegisterTask
 $result.RegisterTask={
  param($generation,$record)
@@ -101,13 +102,19 @@ try{
  Case 'fresh_install_through_public_entrypoint' {
   Import-Module (Join-Path $repo 'PublicInstall.psm1') -Force -DisableNameChecking
   $public=Get-Module PublicInstall
-  $fixtureServices=@{
-   Prerequisites={}
-   Policy={param($role) if($role -cne 'codexless'){throw 'UNEXPECTED_FIXTURE_BINARY_REQUEST'};[pscustomobject]@{state='published';buildId='15a17579c9c78448bbbd9af5a6589b1817dbf2fbae968cea7ff16a2fe4837898'}}
-   Stage={param($directory)[pscustomobject]@{stagedRoot=$CandidateRoot}}.GetNewClosure()
-   Binary={param($role,$directory) if($role -cne 'node'){throw 'UNEXPECTED_FIXTURE_BINARY_REQUEST'};$node}.GetNewClosure()
-   Provision={param($root,$exe) $null=& $nativeCommand11 $root}
-   Adapter={param($Root,$ProjectPath,$Port,$TrustedPayloadSha256,$NodeExe,$CodexlessRoot) New-AcceptanceAdapter $Root}
+  # Retain the real published policy, HTTPS download, archive/root verification
+  # and locked dependency provisioner. Only test task authority and Browser
+  # backend are isolated; no production tasks or Browser state are used.
+  $fixtureServices=& $public {New-PublicInstallServices}
+  if($QualifiedNodeExe){
+   $p=& $public {Get-ArtifactPolicy node}
+   Assert ((Get-FileHash -LiteralPath $QualifiedNodeExe -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $p.executableSha256)
+   $fixtureServices.Binary={param($role,$directory) if($role -cne 'node'){throw 'UNEXPECTED_FIXTURE_BINARY_REQUEST'};$QualifiedNodeExe}.GetNewClosure()
+  }
+  $fixtureServices.Adapter={param($Root,$ProjectPath,$Port,$TrustedPayloadSha256,$NodeExe,$CodexlessRoot)
+   $script:RuntimeRoot=$CodexlessRoot
+   $script:adapter=New-AcceptanceAdapter $Root
+   $script:adapter
   }
   # Browser acceptance stays deterministic; this native case proves task/owner/listener readiness without a production Browser backend.
   $fixtureServices.Doctor={param($generation,$root) $state=Lifecycle Status; $state.ownerVerified -and $state.piecesVerified -and !$state.cleanupRequired -and (& $readyCommand (& $configCommand $root))}
@@ -252,11 +259,11 @@ finally{
   $failure=$true;$results.Add([pscustomobject]@{name='cleanup';status='FAIL';code='EXACT_CLEANUP_UNPROVEN_EVIDENCE_RETAINED'})
   [IO.File]::WriteAllText((Join-Path $base 'cleanup.error.txt'),($_|Out-String)+$_.ScriptStackTrace)
  }
- $report=[ordered]@{scope='same-machine-native-local-unpublished-candidate';fixtureRetained=$true;pass=@($results|Where-Object status -eq PASS).Count;fail=@($results|Where-Object status -eq FAIL).Count;skipExternal=0;blockedUnpublishedArtifact=1;results=$results.ToArray()}
+ $report=[ordered]@{scope='same-machine-native-published-distribution-disposable';fixtureRetained=$true;pass=@($results|Where-Object status -eq PASS).Count;fail=@($results|Where-Object status -eq FAIL).Count;skipExternal=0;blockedUnpublishedArtifact=0;results=$results.ToArray()}
  $json=$report|ConvertTo-Json -Depth 6
  [IO.File]::WriteAllText((Join-Path $base 'result.json'),$json,[Text.UTF8Encoding]::new($false))
  if($ReportPath){[IO.File]::WriteAllText($ReportPath,$json,[Text.UTF8Encoding]::new($false))}
- Write-Output ("RESULT: {0} PASS; {1} FAIL; 0 SKIP_EXTERNAL; 1 BLOCKED_UNPUBLISHED_ARTIFACT" -f $report.pass,$report.fail)
+ Write-Output ("RESULT: {0} PASS; {1} FAIL; 0 SKIP_EXTERNAL; 0 BLOCKED_UNPUBLISHED_ARTIFACT" -f $report.pass,$report.fail)
  Write-Output ('LOCAL_EVIDENCE: '+$base)
 }
 if($failure){exit 1}

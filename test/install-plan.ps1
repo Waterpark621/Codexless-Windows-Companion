@@ -13,7 +13,12 @@ $node=(Get-Command node.exe -ErrorAction Stop).Source
 $fixtureScript=Join-Path $fixture 'Install.fixture.ps1'
 $source=Get-Content -LiteralPath (Join-Path $repo 'Install.ps1') -Raw
 $artifactImport="Import-Module (Join-Path `$PSScriptRoot 'ArtifactProvenance.psm1') -Force -DisableNameChecking"
-$artifactPath=(Join-Path $repo 'ArtifactProvenance.psm1').Replace("'","''")
+# Explicit unpublished policy fixture preserves planner/refusal tests after publication.
+Copy-Item (Join-Path $repo 'ArtifactProvenance.psm1') (Join-Path $fixture 'ArtifactProvenance.psm1')
+$fixturePolicy=Get-Content (Join-Path $repo 'ARTIFACT-POLICY.json') -Raw|ConvertFrom-Json
+$fixturePolicy.codexless.state='unpublished';$fixturePolicy.codexless.url=$null;$fixturePolicy.codexless.archiveFileName=$null;$fixturePolicy.codexless.sha256=$null
+[IO.File]::WriteAllText((Join-Path $fixture 'ARTIFACT-POLICY.json'),($fixturePolicy|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+$artifactPath=(Join-Path $fixture 'ArtifactProvenance.psm1').Replace("'","''")
 if(([regex]::Matches($source,[regex]::Escape($artifactImport))).Count -ne 1){throw 'artifact import fixture target drifted'}
 $source=$source.Replace($artifactImport,("Import-Module '"+$artifactPath+"' -Force -DisableNameChecking"))
 $target=@'

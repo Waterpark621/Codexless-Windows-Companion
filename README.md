@@ -1,78 +1,125 @@
 # Codexless Windows Companion
 
-Status: **public installer implemented; exact Codexless distribution publication is still required before friend installation.**
+A Windows companion for installing, running and supervising Codexless with automatic startup, recovery, Browser support, health checks and optional OpenAI tunnels.
 
-Codexless Windows Companion is a small per-user Windows supervisor for a qualified Codexless release. It provides one verified interactive-session owner, duplicate prevention, cooperative shutdown, tunnel lifecycle, verified prior-boot recovery, rollback boundaries, and health checks.
+**Preview — locally qualified; external clean-machine validation pending.**
 
-The Companion is intentionally separate from Codexless core:
+## Quick Install
 
-- **Codexless fork** owns MCP/runtime/Browser behavior and the lifecycle/release contract.
-- **Windows Companion** owns Windows startup, supervision, tunnel lifetime, and recovery.
+1. Download the Companion Preview ZIP from [Releases](https://github.com/Waterpark621/Codexless-Windows-Companion/releases).
+2. Compare its SHA-256 with the release notes, then extract it into a new folder. Use the attached ZIP, not GitHub's source-code archive.
+3. In that extracted folder, start **Windows PowerShell 5.1** with `powershell.exe -NoProfile -ExecutionPolicy Bypass`. This sets script policy only for that session; enforced Windows security policy must still permit installation. Copy the **payload tree SHA-256** from the same release notes into `$trustedPayload` below. It is different from the ZIP checksum.
+4. Select an existing local project directory and run:
 
-## Portable runtime contract
+```powershell
+$trustedPayload = '<payload-tree-sha256-from-release-notes>'
+$project = Read-Host 'Existing local project directory'
+./Install.ps1 -ProjectPath $project -TrustedPayloadSha256 $trustedPayload -NoTunnel
+```
 
-The old machine-certified launcher adapter has been removed from this public tree.
+The installer downloads and verifies the pinned Codexless distribution and Node runtime, creates destination-local settings, registers a least-privilege per-user startup task, starts the household and requires Doctor **PASS**. Installation defaults to zero tunnels. Success returns JSON with `state: installed`, `verified: true` and `doctorVerdict: PASS`; errors are visible and an incomplete transaction remains fenced for verified recovery.
 
-The Companion now binds to an explicit destination-machine settings file and a qualified Codexless release:
+## Requirements
 
-- settings.json provides the selected project directory, Codexless release root, Node executable/port, and optional local tunnel configuration.
-- config/release-manifest.json inside the selected Codexless release supplies product/version/build/source/host-contract identity.
-- this preview is pinned to Waterpark621/Codexless 0.1.2-preview.1, build 15a17579c9c78448bbbd9af5a6589b1817dbf2fbae968cea7ff16a2fe4837898, source af80d290a265b414de9792b1b53600180be4c0e2.
-- the exact qualified manifest bytes and every manifest-controlled release file are hash-checked before use.
-- Codexless starts directly through its supported scripts/launch.mjs http entrypoint after the Companion removes inherited NODE_OPTIONS from the child environment; the qualified Codexless launcher independently rejects non-empty NODE_OPTIONS.
-- readiness is checked through /readyz and must match the exact expected version, public surface, build ID, and source revision; readiness containing defaultCwd is rejected.
-- settings and selected release build are immutable for one running owner generation; updates stop the owner first.
+- Windows x64, an ordinary interactive user and Windows PowerShell 5.1. Startup runs when that user is logged in; this is not an always-on Windows service.
+- Windows security policy must permit the per-user Scheduled Task and qualified executables.
+- An existing local project folder, separate from the extracted ZIP and install destination. Reparse traversal, UNC paths, drive roots and overlapping directories are refused.
+- HTTPS access to GitHub release assets, nodejs.org and the npm registry. Node **24.12.0** is pinned and verified; a PATH version is not sufficient.
+- A supported, connected Codexless Browser backend on the destination computer. Doctor fails visibly if it is missing; the Companion does not copy Browser state or Codex credentials from another machine.
 
-No external Core.ps1, Host.ps1, AST-derived working directory, copied runtime quartet, or machine-specific Browser snapshot ID is part of this public contract.
+The default destination is `Join-Path $env:LOCALAPPDATA 'CodexlessCompanion'`, with port **7690**. Use `-InstallDirectory` and `-Port` for a separate destination and available port. Do not install over an existing unrelated Codexless household. See [Public installer](docs/PUBLIC-INSTALL.md) for the full contract.
 
-## Privacy / distribution boundary
+## Verifying with Doctor
 
-A public release must never contain machine-specific runtime state or personal deployment evidence. Do not commit:
+After installation, resolve the current immutable generation from its receipt:
 
-- user profile names or absolute per-user paths;
-- real Windows SIDs, PIDs, owner receipts, timestamps, task exports, or recovery dumps;
-- real tunnel aliases/account identifiers from a deployment;
-- DPAPI blobs, tunnel keys, credentials, tokens, cookies, or browser profile data;
-- copied Browser/native-host snapshots or cache directories;
-- local rollback archives or machine certification baselines.
+```powershell
+$root = Join-Path $env:LOCALAPPDATA 'CodexlessCompanion'
+$owner = Get-Content (Join-Path $root 'install-owner.json') -Raw | ConvertFrom-Json
+if ($owner.generationId -cnotmatch '^[0-9a-f]{32}$') { throw 'Invalid generation' }
+$generation = Join-Path (Join-Path $root 'generations') $owner.generationId
+& (Join-Path $generation 'Doctor.ps1') -InstallDirectory $root -Json
+```
 
-Installation identity is generated on the destination PC. Runtime identity safeguards still use the destination user's SID, exact PID creation times, ancestry, listener ownership, and tunnel receipts at runtime.
+Use your selected destination for `$root` if you changed it. Doctor must return `ok: true` and `verdict: PASS`. It verifies release identity, exact task/owner/listener evidence, Browser connectivity and any enabled tunnel. A disabled tunnel is a nonblocking skip.
 
-## Current validated lineage
+## Start / Stop / Restart / Status
 
-The owner/recovery mechanisms were brought forward from internally validated source lineage ending at:
+Using `$root` and `$generation` above:
 
-37686a932ff0c355d363cd4dc3bbf1a9c3a46dc1
+```powershell
+& (Join-Path $generation 'Status.ps1') -InstallDirectory $root
+& (Join-Path $generation 'Stop.ps1') -InstallDirectory $root
+& (Join-Path $generation 'Start.ps1') -InstallDirectory $root
+& (Join-Path $generation 'Restart.ps1') -InstallDirectory $root
+```
 
-The public tree has a fresh Git history so older machine-specific development history is not publishable by accident.
+Stop is cooperative and verifies exact owned processes. Repeated Start does not create a second owner. Re-resolve `$generation` after an update or rollback.
 
-## Target install experience
+## Optional tunnel setup
 
-The intended supported flow is:
+For a fresh install with **one existing OpenAI tunnel**, replace `-NoTunnel` with:
 
-1. verify Windows and prerequisites;
-2. install or select one qualified Waterpark621/Codexless release;
-3. select the project/context directory;
-4. configure tunnel credentials locally on this PC;
-5. create one least-privilege per-user Scheduled Task;
-6. start and verify Codexless;
-7. start and verify the optional tunnel;
-8. verify Browser capability when enabled;
-9. retain one rollback generation;
-10. survive Desktop close/reopen and Windows reboot in the supported logged-in-user model.
+```powershell
+./Install.ps1 -ProjectPath $project -TrustedPayloadSha256 $trustedPayload `
+    -TunnelId 'tunnel_REPLACE_ME' -TunnelAlias 'default'
+```
 
-`Install.ps1` now stages the exact pinned Codexless distribution and official dependencies, accepts destination-local configuration, and invokes the existing native transaction engine. The simple flow defaults to zero tunnels; supplying a tunnel ID enables one tunnel and prompts for a runtime key as a SecureString. The native adapter writes current-user DPAPI state inside the destination transaction fence. An externally trusted Companion payload tree digest is required; the installer never derives its own trust from the current files. Current `unpublished` distribution metadata still refuses before destination, task, process, or credential mutation. No public archive URL or checksum is invented.
+The installer prompts for that tunnel's **runtime API key** securely. It verifies official tunnel-client **0.0.14** and stores the key on this PC using current-user Windows DPAPI. Never enter an admin key. The Companion does not create or delete remote tunnel objects. To add a tunnel after installation, use Advanced management.
 
-Success requires exact owner/listener readiness followed by Doctor `PASS`, including a supported connected Browser backend. Failure retains the existing interrupted-install fence; `-Recover` resumes only a verified transaction with the same payload/settings binding. Updates retain the existing stop, promote and verified rollback contract. See [Public installer](docs/PUBLIC-INSTALL.md) for commands and publication fields. Different-user/machine and live credentialed tunnel acceptance remain pending external acceptance; they do not disable the implemented entrypoint.
+## Advanced multiple tunnels
 
-## Development rule
+Each profile has its own local identity, tunnel binding, DPAPI key revision and exact ownership/lifetime evidence. Stop the household before editing:
 
-Local engineering includes digest-only owner/recovery generation binding, pinned official Node 24.12.0 Windows x64 and OpenAI tunnel-client v0.0.14 full client archives, bounded managed tunnel lifecycle with native lifetime guards, staged install/repair/uninstall/update/rollback transaction engines, and a real Windows transaction adapter. `NativeTransactionAdapter.psm1` accepts only externally trusted payload tree digests, creates destination-local settings and DPAPI state after the transaction fence exists, and binds the exact immutable generation to a least-privilege per-user Scheduled Task without force termination or foreign-state adoption. Codexless remote distribution binding is implemented but intentionally fail-closed as `unpublished` because the qualified candidate has not been published. The frozen release identity, manifest digest, host contract, archive format, bounds, and payload shape are already bound; publication must supply only `state=published`, the immutable HTTPS archive URL, exact archive filename, and exact archive SHA-256. `Stage-QualifiedCodexlessDistribution` is the download-to-qualified-staged-root integration interface. Install.ps1 wires that interface to the existing native transaction engine. See docs/GENERATION-CONTRACT.md, docs/ARTIFACT-PROVENANCE.md, docs/TUNNEL-LIFECYCLE.md and docs/INSTALL-TRANSACTIONS.md for exact boundaries.
+```powershell
+& (Join-Path $generation 'Stop.ps1') -InstallDirectory $root
+& (Join-Path $generation 'Tunnels.ps1') -Root $root -Action List
+& (Join-Path $generation 'Tunnels.ps1') -Root $root -Action Status
+```
 
-Keep the ownership/security mechanisms; remove machine assumptions.
+Add, Remove and RotateKey are supported through the same installed controller. Add requires the exact qualified tunnel-client executable and prompts securely for the new profile's runtime key. Remove changes local management only; it does not delete the remote tunnel. See [Advanced profile commands](docs/MULTI-TUNNEL-PROFILES.md) for exact parameters, limits and restart instructions. Household Start starts enabled profiles; Stop acts only on exact owned configured tunnels. Credentials are never transferred between machines.
 
-Before any push or release, run `tools/Test-PublicTree.ps1`, scan the complete Git history with private needles, and inspect the exact release archive contents. Runtime tunnel profiles and Browser/cache directories must never be packaged.
+## Updating / rollback
 
-See docs/ARCHITECTURE.md, docs/PORTABILITY-CHECKLIST.md, and docs/PRIVACY.md.
+This Preview includes the qualified install/update/rollback transaction engine. It does not include an `Update.ps1` command or a one-click public update flow. Future candidates must have externally accepted payload digests and verified Core distributions before the existing `Invoke-OwnedUpdate` interface can promote them. Do not overwrite generation files or change settings by hand. Failed candidate updates must prove exit and verify the retained previous generation before reporting rollback. See [Transaction contract](docs/INSTALL-TRANSACTIONS.md).
 
-Advanced destination-local multi-tunnel management is described in [Multi-tunnel profiles](docs/MULTI-TUNNEL-PROFILES.md). The simple installer retains its zero-or-one default tunnel flow. Published artifact binding is required; external acceptance remains pending.
+## Uninstall
+
+The existing verified uninstall interface preserves unknown project/root data and removes only exact unchanged owned files and the exact task. It requires the trusted payload digest of the **currently installed release**, taken from its release notes:
+
+```powershell
+Import-Module (Join-Path $generation 'CompanionRuntime.psm1') -Force
+Import-Module (Join-Path $generation 'NativeTransactionAdapter.psm1') -Force
+Import-Module (Join-Path $generation 'InstallTransaction.psm1') -Force
+$cfg = Get-CompanionConfig $root
+$adapter = New-NativeTransactionAdapter -Root $root -ProjectPath $cfg.projectPath `
+    -CodexlessRoot $cfg.codexlessRoot -NodeExe $cfg.nodeExe -Port $cfg.port `
+    -TrustedPayloadSha256 @($trustedPayload)
+Invoke-OwnedUninstall -Root $root -Adapter $adapter
+```
+
+A verified uninstall tombstone permits reinstall. Runtime dependency staging remains beside the destination because settings reference it; uninstall does not authorize deleting unrelated directories. There is no `Uninstall.ps1` script in this Preview.
+
+## Troubleshooting
+
+- **Payload provenance failure:** verify the attached ZIP checksum, extract into an empty folder and use its release-note payload tree digest. Extra or edited files are refused. Do not compute a replacement expected digest from the failing folder.
+- **Doctor Browser failure:** connect a supported destination Browser backend and rerun Doctor. Missing connectivity is not accepted as success.
+- **Foreign task, listener or owner:** stop and investigate that existing installation through its own supported controller. Companion will not adopt or terminate ambiguous processes.
+- **Interrupted install:** keep its evidence. Resume with the same extracted payload, project, port and trusted digest using `./Install.ps1 -Recover -ProjectPath $project -TrustedPayloadSha256 $trustedPayload`. Use the original `-InstallDirectory` if customized. Recovery refuses changed settings or unprovable authority; do not delete receipts to bypass it.
+- **Tunnel failure:** check that profile's status and runtime credential. RotateKey changes only the selected profile; never copy DPAPI blobs between users.
+
+## Preview status
+
+The local deterministic, integration and disposable Windows native gates cover installer success/refusal, lifecycle, DPAPI, prior-boot recovery, update rollback, Doctor and independent tunnel profiles. Local native tests isolate task authority and Browser backend; they do not claim live remote credential acceptance.
+
+Clean second-user/machine field validation and live credentialed three-tunnel acceptance remain **pending**. Production installations and credentials are outside these tests.
+
+## Technical / security docs
+
+- [Public installer and recovery](docs/PUBLIC-INSTALL.md)
+- [Architecture](docs/ARCHITECTURE.md) and [generation identity](docs/GENERATION-CONTRACT.md)
+- [Artifact provenance](docs/ARTIFACT-PROVENANCE.md) and [transaction fences / rollback](docs/INSTALL-TRANSACTIONS.md)
+- [Tunnel lifetime](docs/TUNNEL-LIFECYCLE.md) and [Advanced profiles](docs/MULTI-TUNNEL-PROFILES.md)
+- [Privacy](docs/PRIVACY.md) and [portability checklist](docs/PORTABILITY-CHECKLIST.md)
+
+The pinned Core is `Waterpark621/Codexless` **0.1.2-preview.1**. Release identity and every manifest-controlled file are verified. The Companion stores destination-local runtime keys with DPAPI, persists no admin key, rejects PID reuse as ownership, and fails closed on foreign or ambiguous task/process state. See the release notes and artifact policy for exact hashes and build/source identity.

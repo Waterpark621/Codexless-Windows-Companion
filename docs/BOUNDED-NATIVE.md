@@ -6,6 +6,6 @@ A timeout is **indeterminate**, not evidence that the native process exited. The
 
 This substrate is tested using harmless disposable children, including stdout/stderr overflow, preserved arguments, a naturally exiting timeout fixture, wrong executable hash and nonzero exit. It now supplies every qualified tunnel status/connect/stop operation. Exact managed-child attribution and guarded official stop are described in TUNNEL-LIFECYCLE.md. Automatic connect is limited to a fresh verified owner generation; existing or uncertain generations cannot be replaced.
 
-Installer/repair/uninstall and update/rollback transactions remain disabled until their complete provenance and ownership adapters are qualified. Generic child bounds alone cannot authorize promotion, task mutation, adoption or cleanup.
+Installer/repair/uninstall and update/rollback use the qualified provenance and ownership adapters. Generic child bounds alone cannot authorize promotion, task mutation, adoption or cleanup.
 
 The child environment removes ambient runtime/admin keys and tunnel state/profile roots. Only the three explicitly allowed runtime key/state/profile variables may be supplied; the parent environment never changes. Successful invocations expose creation and exit times for managed-child launch attribution. Windows signature/policy refusal has a sanitized NATIVE_SECURITY_POLICY_UNSUPPORTED code; no security control is altered.

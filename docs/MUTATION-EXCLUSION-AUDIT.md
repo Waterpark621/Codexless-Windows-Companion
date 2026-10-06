@@ -44,4 +44,4 @@ Production keeps its historical singleton namespace. Only the strict transaction
 
 This implementation targets the registered task's Windows PowerShell 5.1 runtime. It does not claim PowerShell 7 qualification or a security boundary against arbitrary code already executing with the same user's full authority.
 
-Genuine separate Windows logon-session execution remains a `SECOND_MACHINE_TEST_ITEM`. Same-session processes and interactive-token Scheduler tests do not prove it. Different-user DPAPI and clean-machine Scheduler/tunnel policy remain separate acceptance items. Codexless publication stays fail-closed and unpublished.
+Genuine separate Windows logon-session execution remains a `SECOND_MACHINE_TEST_ITEM`. Same-session processes and interactive-token Scheduler tests do not prove it. Different-user DPAPI and clean-machine Scheduler/tunnel policy remain separate acceptance items. The current Codexless distribution is published and pinned; unpublished policy fixtures still fail closed.
