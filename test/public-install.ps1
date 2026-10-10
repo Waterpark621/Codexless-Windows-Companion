@@ -173,7 +173,7 @@ $payload=Join-Path $fixture 'public-payload';New-Payload $payload 'public entryp
 Copy-Item -LiteralPath (Join-Path $repo 'Doctor.ps1') -Destination (Join-Path $payload 'Doctor.ps1')
 $digest=Get-TransactionTreeDigest $payload
 $archive=Join-Path $fixture 'archive.zip';[IO.File]::WriteAllBytes($archive,[byte[]](1,2,3))
-$state=[pscustomobject]@{Unpublished=$false;BadHash=$false;WrongRelease=$false;FailStart=$false;Doctor=$true;ReplaceTask=$false;StageCalls=0;ProvisionCalls=0;DoctorCalls=0;LastAdapter=$null}
+$state=[pscustomobject]@{Unpublished=$false;BadHash=$false;WrongRelease=$false;FailStart=$false;Doctor=$true;DoctorDestination='';ReplaceTask=$false;StageCalls=0;ProvisionCalls=0;DoctorCalls=0;LastAdapter=$null}
 $factory={
  param($Root,$ProjectPath,$CodexlessRoot,$NodeExe,$Port,$TrustedPayloadSha256,$TunnelClientExe,$TunnelId,$TunnelAlias,$TunnelRuntimeKey)
  $args=@{Root=$Root;ProjectPath=$ProjectPath;CodexlessRoot=$CodexlessRoot;NodeExe=$NodeExe;Port=$Port;TrustedPayloadSha256=$TrustedPayloadSha256;DisposableTaskName=$taskName;ReadyTimeoutSeconds=1}
@@ -207,11 +207,12 @@ $services=@{
  Binary={param($role,$directory) if($role -ceq 'node'){$node}else{$tunnelExe}}.GetNewClosure()
  Provision={param($root,$exe) $state.ProvisionCalls++}.GetNewClosure()
  Adapter=$factory
- Doctor={param($generation,$root) $state.DoctorCalls++;$state.Doctor}.GetNewClosure()
+ Doctor={param($generation,$root) $state.DoctorCalls++;$state.Doctor -and $root -ceq $state.DoctorDestination}.GetNewClosure()
  Config={param($root) & $nativeModule {param($root) Get-CompanionConfig $root} $root}.GetNewClosure()
 }
 & $public {param($s) $script:PublicFixtureServices=$s;function script:New-PublicInstallServices {$script:PublicFixtureServices}} $services
 function Install([string]$root,[switch]$Tunnel,[switch]$Recover,[string]$Expected=$digest,[string]$Workspace=$project) {
+ $state.DoctorDestination=[IO.Path]::GetFullPath($root)
  $args=@{PayloadRoot=$payload;TrustedPayloadSha256=$Expected;InstallDirectory=$root;ProjectPath=$Workspace;NodeExe=$node;CodexlessArchivePath=$archive;Recover=$Recover}
  if($Tunnel){$args.TunnelId='tunnel_fixture';$args.TunnelAlias='fixture';$args.TunnelClientExe=$tunnelExe;$args.TunnelRuntimeKey=$runtimeKey}else{$args.NoTunnel=$true}
  Invoke-PublicCompanionInstall @args
@@ -243,6 +244,16 @@ Test 'Owned uninstall and reinstall use existing retirement contract' {
  $r=Invoke-OwnedUninstall $destination $state.LastAdapter;Assert ($r.state -ceq 'uninstalled')
  $r=Install $destination;Assert ($r.state -ceq 'installed')
  Invoke-OwnedUninstall $destination $state.LastAdapter|Out-Null
+}
+Test 'Doctor destination remains exact when a caller has an unrelated root variable' {
+ $target=Join-Path $fixture 'doctor-bound-destination'
+ function Invoke-WithDecoyRoot([string]$Destination) {
+  $root=Join-Path $fixture 'unrelated-caller-root'
+  Install $Destination
+ }
+ $r=Invoke-WithDecoyRoot $target
+ Assert ($r.verified -and $r.doctorVerdict -ceq 'PASS')
+ Invoke-OwnedUninstall $target $state.LastAdapter|Out-Null
 }
 Test 'Verified uninstall then reinstall changes workspace with fresh binding and preserves both project folders' {
  $root=Join-Path $fixture 'workspace-reinstall'
