@@ -266,14 +266,9 @@ Test 'An untrusted existing Browser cache stops the launch before Node runs' {
   $probeScript=Join-Path $root 'unsafe-browser-probe.mjs'
   [IO.File]::WriteAllText($probeScript,('import fs from "node:fs";fs.writeFileSync('+($marker|ConvertTo-Json -Compress)+',"unexpected");'),[Text.UTF8Encoding]::new($false))
   $probeCfg=[pscustomobject]@{nodeExe=$node;nodeSha256='2ffe3acc0458fdde999f50d11809bbe7c9b7ef204dcf17094e325d26ace101d8';launchScript=$probeScript;port=17691;projectPath=$browserProject}
-  $command=Get-CodexlessPrivateConsoleCommand $probeCfg
-  $savedPreference=$ErrorActionPreference
-  try {
-    $ErrorActionPreference='Continue'
-    & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $command 2>$null
-    $code=$LASTEXITCODE
-  } finally {$ErrorActionPreference=$savedPreference}
-  Assert ($code -ne 0 -and !(Test-Path -LiteralPath $marker))
+  $refused=$false
+  try{Get-CodexlessPrivateConsoleCommand $probeCfg|Out-Null}catch{$refused=$_.Exception.Message -ceq 'BROWSER_SNAPSHOT_ACCESS_UNTRUSTED'}
+  Assert ($refused -and !(Test-Path -LiteralPath $marker))
 }
 
 Test 'Qualified launch rejects same-path Node byte replacement before execution' {

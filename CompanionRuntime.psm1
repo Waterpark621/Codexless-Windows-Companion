@@ -355,6 +355,10 @@ function Get-CodexlessPrivateConsoleCommand {
         # Browser snapshot inside the workspace already selected for this task.
         $browserWorkspace=([IO.Path]::GetFullPath([string]$Config.projectPath)).Replace("'","''")
         $browserStoreModule=(Join-Path $PSScriptRoot 'BrowserSnapshotStore.psm1').Replace("'","''")
+        # Refuse invalid cache/setup before creating a private console receipt.
+        # The child verifies again before execution to catch an intervening edit.
+        Import-Module (Join-Path $PSScriptRoot 'BrowserSnapshotStore.psm1') -Force
+        $null=Initialize-WorkspaceBrowserSnapshotStore -Workspace ([string]$Config.projectPath)
         $prefix="Import-Module '$browserStoreModule' -Force; `$env:CODEXLESS_BROWSER_RUNTIME_CWD='$browserWorkspace'; `$env:CODEXLESS_BROWSER_SNAPSHOT_STORE=Initialize-WorkspaceBrowserSnapshotStore -Workspace '$browserWorkspace'; "
     }
     $d=[char]36
