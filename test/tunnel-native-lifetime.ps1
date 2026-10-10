@@ -73,5 +73,13 @@ if($QualifiedTunnelExe){
  $parsed=$status.Stdout|ConvertFrom-Json
  if($parsed.alias -cne 'fixture' -or $parsed.tunnel_id -cne 'tunnel_fixture' -or $parsed.process_running -isnot [bool] -or $parsed.process_running){throw 'official status contract mismatch'}
  $passed++;Write-Output 'PASS official bounded JSON status in isolated synthetic state without keys'
+ $guardOwner=[Diagnostics.Process]::GetCurrentProcess()
+ try{
+  $stopped=Invoke-BoundedNative $QualifiedTunnelExe $pin @('runtimes','stop','fixture','--json') $root -Environment $environment -GuardHandle $guardOwner.Handle
+  if(!$stopped.Ok -or !$stopped.GuardTransferred -or $stopped.LifetimeMayRemain -or $stopped.ExitCode -ne 0 -or !$stopped.ExitedAt){throw 'official guarded stopped fixture failed'}
+  $shape=$stopped.Stdout|ConvertFrom-Json
+  if($shape.stopped -isnot [bool] -or !$shape.stopped -or !$shape.already_stopped -or $shape.alias -cne 'fixture' -or $shape.tunnel_id -cne 'tunnel_fixture'){throw 'official guarded stop result mismatch'}
+  $passed++;Write-Output 'PASS official guarded stop preserves completed CLI result in isolated zero-PID namespace'
+ }finally{$guardOwner.Dispose()}
 }
-Write-Output ("RESULT: {0}/{0} PASS; real disposable child lifetime; optional pinned client read-only status; no backend/connect/live-state actions" -f $passed)
+Write-Output ("RESULT: {0}/{0} PASS; real disposable child lifetime; optional pinned client isolated status/zero-PID stop; no backend/connect/live-state actions" -f $passed)

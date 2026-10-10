@@ -8,6 +8,8 @@ Preview 5 adds verified recovery for stopped tunnel records that omit their PID 
 
 Preview 7 fixes fresh-process Doctor module visibility and binds the Browser helper command to the installed generation so source controllers and the running task agree on ownership. It also refuses packaged-app AppData installation before mutation; use Explorer for the default location or a custom location outside AppData. See the [install guide](docs/PUBLIC-INSTALL.md).
 
+Preview 8 anchors the guarded native command's managed process handle before resuming it. Successful tunnel stop commands retain their exit code, output and exact lifetime proof even after the command exits quickly. Failures, timeouts and uncertain lifetimes still retain recovery evidence.
+
 ## Quick Start
 
 1. Download the attached Preview ZIP from [Releases](https://github.com/Waterpark621/Codexless-Windows-Companion/releases) and extract it into a new folder.

@@ -84,6 +84,16 @@ namespace Codexless {
     stdout=new StreamReader(new FileStream(new Microsoft.Win32.SafeHandles.SafeFileHandle(or,true),FileAccess.Read));or=IntPtr.Zero;
     stderr=new StreamReader(new FileStream(new Microsoft.Win32.SafeHandles.SafeFileHandle(er,true),FileAccess.Read));er=IntPtr.Zero;
     var process=Process.GetProcessById(pi.pid);
+    // GetProcessById supplies a lazy PID association. Anchor its managed
+    // process handle while the native child is still suspended and pi.process
+    // pins that exact lifetime. WaitForExit's temporary handle alone does not
+    // preserve ExitCode/ExitTime after a short-lived guarded child exits.
+    try{
+     IntPtr anchored=process.Handle;
+     result.CreatedAt=process.StartTime.ToUniversalTime().ToString("o");
+    }catch{
+     process.Dispose();result.Code="NATIVE_GUARD_UNAVAILABLE";result.Suspended=true;return null;
+    }
     if(ResumeThread(pi.thread)==0xffffffff){process.Dispose();result.Code="NATIVE_GUARD_UNAVAILABLE";result.Suspended=true;return null;}
     return process;
    }finally{

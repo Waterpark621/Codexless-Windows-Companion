@@ -28,6 +28,26 @@ Test 'Nonzero exit is sanitized and preserves exit code' {$r=Run exit;Assert (!$
 Test 'Timeout returns bounded indeterminate lifetime without force termination' {$clock=[Diagnostics.Stopwatch]::StartNew();$r=Run timeout 200;Assert ($r.TimedOut -and !$r.Ok -and $r.LifetimeMayRemain -and $r.ProcessId -gt 0 -and $r.CreatedAt -and !$r.Stdout);Assert ($clock.ElapsedMilliseconds -lt 1500);Start-Sleep -Milliseconds 1900;Assert ($null -eq (Get-Process -Id $r.ProcessId -ErrorAction SilentlyContinue))}
 Test 'Control characters are rejected before child start' {$r=Invoke-BoundedNative $node $hash @("bad`nargument") $root;Assert (!$r.Ok -and $r.ProcessId -eq 0)}
 Test 'Native success exposes exact parent creation and exit interval' {$r=Run env;Assert ($r.Ok -and [DateTime]::Parse($r.ExitedAt) -ge [DateTime]::Parse($r.CreatedAt))}
+Test 'Short-lived guarded children retain exact success and exit interval' {
+ $guard=[Diagnostics.Process]::GetCurrentProcess()
+ try{for($i=0;$i -lt 6;$i++){
+  $r=Invoke-BoundedNative $node $hash @($script,'env') $root -GuardHandle $guard.Handle
+  Assert ($r.Ok -and $r.Code -ceq 'NATIVE_OK' -and $r.GuardTransferred -and !$r.LifetimeMayRemain -and $r.ExitCode -eq 0 -and $r.Stdout -ceq 'true')
+  Assert ($r.CreatedAt -and $r.ExitedAt -and [DateTime]::Parse($r.ExitedAt) -ge [DateTime]::Parse($r.CreatedAt))
+ }}finally{$guard.Dispose()}
+}
+Test 'Short-lived guarded nonzero exit remains failure with exact exit code' {
+ $guard=[Diagnostics.Process]::GetCurrentProcess()
+ try{$r=Invoke-BoundedNative $node $hash @($script,'exit') $root -GuardHandle $guard.Handle
+  Assert (!$r.Ok -and $r.Code -ceq 'NATIVE_EXIT_FAILED' -and $r.ExitCode -eq 7 -and $r.GuardTransferred -and !$r.LifetimeMayRemain -and !$r.Stdout -and $r.ExitedAt)
+ }finally{$guard.Dispose()}
+}
+Test 'Guarded output overflow preserves refusal and completed lifetime proof' {
+ $guard=[Diagnostics.Process]::GetCurrentProcess()
+ try{$r=Invoke-BoundedNative $node $hash @($script,'stdout') $root -GuardHandle $guard.Handle -OutputLimit 1024
+  Assert (!$r.Ok -and $r.Code -ceq 'NATIVE_OUTPUT_LIMIT' -and $r.OutputOverflow -and $r.GuardTransferred -and !$r.LifetimeMayRemain -and !$r.Stdout -and $r.ExitedAt)
+ }finally{$guard.Dispose()}
+}
 Test 'Secrets and tunnel roots are isolated in child environment only' {
  $names=@('CONTROL_PLANE_API_KEY','OPENAI_ADMIN_KEY','OPENAI_API_KEY','TUNNEL_CLIENT_STATE_DIR','TUNNEL_CLIENT_PROFILE_DIR');$saved=@{}
  try{foreach($n in $names){$saved[$n]=[Environment]::GetEnvironmentVariable($n,'Process');[Environment]::SetEnvironmentVariable($n,'fixture-ambient','Process')}
