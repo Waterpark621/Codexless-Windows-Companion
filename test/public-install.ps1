@@ -30,7 +30,7 @@ function New-Payload([string]$Path,[string]$Marker) {
     New-Item -ItemType Directory -Path $Path -Force|Out-Null
     foreach($name in @(
         'Task-Host.ps1','Household-Host.ps1','UserSessionTask.psm1','WindowsTaskAdapter.psm1',
-        'CompanionRuntime.psm1','GenerationIdentity.psm1','PrivateConsole.psm1','PriorBootOwnership.psm1',
+        'CompanionRuntime.psm1','BrowserSnapshotStore.psm1','GenerationIdentity.psm1','PrivateConsole.psm1','PriorBootOwnership.psm1',
         'VerifiedTunnel.psm1','ArtifactProvenance.psm1','BoundedNative.psm1','Signal-PrivateConsole.ps1','MutationLock.psm1','ARTIFACT-POLICY.json'
     )) {
         [IO.File]::Copy((Join-Path $repo $name),(Join-Path $Path $name),$false)

@@ -215,7 +215,7 @@ Test 'Launch command is release-derived and strips NODE_OPTIONS before Node' {
   Assert ($command -notmatch 'Core\.ps1|Host\.ps1|verified-codex-runtime|Start-VerifiedHousehold')
 }
 
-Test 'Qualified launch child receives no ambient NODE_OPTIONS' {
+Test 'Qualified launch child binds Browser to the selected workspace and receives no ambient NODE_OPTIONS' {
   $probeScript=Join-Path $root 'node-options-probe.mjs'
   $probeOutput=Join-Path $root 'node-options-result.json'
   [IO.File]::WriteAllText($probeScript,@'
@@ -223,10 +223,14 @@ import fs from "node:fs";
 const target = process.env.COMPANION_TEST_OUTPUT;
 fs.writeFileSync(target, JSON.stringify({
   nodeOptions: process.env.NODE_OPTIONS ?? null,
-  port: process.env.CODEX_TOOLBOX_PUBLIC_PORT ?? null
+  port: process.env.CODEX_TOOLBOX_PUBLIC_PORT ?? null,
+  browserCwd: process.env.CODEXLESS_BROWSER_RUNTIME_CWD ?? null,
+  browserStore: process.env.CODEXLESS_BROWSER_SNAPSHOT_STORE ?? null
 }));
 '@,[Text.UTF8Encoding]::new($false))
-  $probeCfg=[pscustomobject]@{nodeExe=$node;nodeSha256='2ffe3acc0458fdde999f50d11809bbe7c9b7ef204dcf17094e325d26ace101d8';launchScript=$probeScript;port=17691}
+  $browserProject=Join-Path $root "workspace with ' quote"
+  $null=New-Item -ItemType Directory -Path $browserProject
+  $probeCfg=[pscustomobject]@{nodeExe=$node;nodeSha256='2ffe3acc0458fdde999f50d11809bbe7c9b7ef204dcf17094e325d26ace101d8';launchScript=$probeScript;port=17691;projectPath=$browserProject}
   $command=Get-CodexlessPrivateConsoleCommand $probeCfg
   $hadNodeOptions=Test-Path Env:NODE_OPTIONS
   $savedNodeOptions=if($hadNodeOptions){[string]$env:NODE_OPTIONS}else{$null}
@@ -240,10 +244,31 @@ fs.writeFileSync(target, JSON.stringify({
     $result=Get-Content -LiteralPath $probeOutput -Raw|ConvertFrom-Json
     Assert ($null -eq $result.nodeOptions)
     Assert ([string]$result.port -ceq '17691')
+    Assert ([string]$result.browserCwd -ceq [IO.Path]::GetFullPath($browserProject))
+    Assert ([string]$result.browserStore -ceq (Join-Path ([IO.Path]::GetFullPath($browserProject)) '.codexless-browser-runtime-v1\snapshots'))
   } finally {
     if($hadNodeOptions){$env:NODE_OPTIONS=$savedNodeOptions}else{Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue}
     if($hadOutput){$env:COMPANION_TEST_OUTPUT=$savedOutput}else{Remove-Item Env:COMPANION_TEST_OUTPUT -ErrorAction SilentlyContinue}
   }
+}
+
+Test 'Disposable isolated runtime keeps its own Browser snapshot store' {
+  $probeCfg=[pscustomobject]@{nodeExe=$node;nodeSha256=('a'*64);launchScript='fixture';port=17691;projectPath=$project;isolatedRuntimeProfile=(Join-Path $root 'isolated')}
+  $command=Get-CodexlessPrivateConsoleCommand $probeCfg
+  Assert ($command.Contains("CODEXLESS_BROWSER_SNAPSHOT_STORE='$($probeCfg.isolatedRuntimeProfile)\browser-snapshots'"))
+  Assert (!$command.Contains('Initialize-WorkspaceBrowserSnapshotStore'))
+}
+
+Test 'An untrusted existing Browser cache stops the launch before Node runs' {
+  $browserProject=Join-Path $root 'unsafe-browser-cache'
+  $null=New-Item -ItemType Directory -Path (Join-Path $browserProject '.codexless-browser-runtime-v1') -Force
+  $marker=Join-Path $root 'unsafe-browser-node-ran.txt'
+  $probeScript=Join-Path $root 'unsafe-browser-probe.mjs'
+  [IO.File]::WriteAllText($probeScript,('import fs from "node:fs";fs.writeFileSync('+($marker|ConvertTo-Json -Compress)+',"unexpected");'),[Text.UTF8Encoding]::new($false))
+  $probeCfg=[pscustomobject]@{nodeExe=$node;nodeSha256='2ffe3acc0458fdde999f50d11809bbe7c9b7ef204dcf17094e325d26ace101d8';launchScript=$probeScript;port=17691;projectPath=$browserProject}
+  $refused=$false
+  try{Get-CodexlessPrivateConsoleCommand $probeCfg|Out-Null}catch{$refused=$_.Exception.Message -ceq 'BROWSER_SNAPSHOT_ACCESS_UNTRUSTED'}
+  Assert ($refused -and !(Test-Path -LiteralPath $marker))
 }
 
 Test 'Qualified launch rejects same-path Node byte replacement before execution' {
