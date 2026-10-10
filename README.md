@@ -6,6 +6,8 @@ Install and run Codexless on Windows with automatic startup, recovery, Browser h
 
 Preview 5 adds verified recovery for stopped tunnel records that omit their PID and sanitized recovery reason codes in Status, Start and the task-owner log. A prior-boot stopped record still requires the full namespace, generation, process and listener proof. See [Recovery details](docs/PRIOR-BOOT-RECOVERY.md).
 
+Preview 7 fixes fresh-process Doctor module visibility and binds the Browser helper command to the installed generation so source controllers and the running task agree on ownership. It also refuses packaged-app AppData installation before mutation; use Explorer for the default location or a custom location outside AppData. See the [install guide](docs/PUBLIC-INSTALL.md).
+
 ## Quick Start
 
 1. Download the attached Preview ZIP from [Releases](https://github.com/Waterpark621/Codexless-Windows-Companion/releases) and extract it into a new folder.

@@ -354,10 +354,31 @@ function Get-CodexlessPrivateConsoleCommand {
         # official runtime's Windows sandbox execute rule. Keep the verified
         # Browser snapshot inside the workspace already selected for this task.
         $browserWorkspace=([IO.Path]::GetFullPath([string]$Config.projectPath)).Replace("'","''")
-        $browserStoreModule=(Join-Path $PSScriptRoot 'BrowserSnapshotStore.psm1').Replace("'","''")
+        $browserModuleRoot=$PSScriptRoot
+        if($Config.PSObject.Properties['companionRoot'] -and $Config.companionRoot){
+            $nativePath=Join-Path $Config.companionRoot 'native-adapter-owner.json'
+            if(Test-Path -LiteralPath $nativePath -PathType Leaf){
+                if((Get-Item -LiteralPath $nativePath -Force).Length -gt 32768 -or ((Get-Item -LiteralPath $nativePath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'BROWSER_GENERATION_BINDING_INVALID'}
+                try{$native=Get-Content -LiteralPath $nativePath -Raw|ConvertFrom-Json -ErrorAction Stop}catch{throw 'BROWSER_GENERATION_BINDING_INVALID'}
+                try{
+                    if($native.version -notin @(1,2) -or $native.state -cne 'active' -or $native.transactionId -cnotmatch '^[0-9a-f]{32}$' -or $native.generationId -cnotmatch '^[0-9a-f]{32}$' -or $native.payloadSha256 -cnotmatch '^[0-9a-f]{64}$'){throw 'invalid'}
+                }catch{throw 'BROWSER_GENERATION_BINDING_INVALID'}
+                $browserModuleRoot=Join-Path (Join-Path $Config.companionRoot 'generations') $native.generationId
+                $cursor=$browserModuleRoot
+                while($cursor){if(!(Test-Path -LiteralPath $cursor -PathType Container) -or ((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'BROWSER_GENERATION_BINDING_INVALID'};$cursor=Split-Path $cursor -Parent}
+            }
+        }
+        # Source controllers and the installed Host must hash the same command.
+        # Bind its helper path to the current native generation, not the caller's
+        # module directory. The native adapter separately proves payload/task trust.
+        $browserStorePath=Join-Path $browserModuleRoot 'BrowserSnapshotStore.psm1'
+        if(!(Test-Path -LiteralPath $browserStorePath -PathType Leaf) -or ((Get-Item -LiteralPath $browserStorePath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'BROWSER_GENERATION_BINDING_INVALID'}
+        $localBrowserStore=Join-Path $PSScriptRoot 'BrowserSnapshotStore.psm1'
+        if((Get-FileHash -LiteralPath $browserStorePath -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $localBrowserStore -Algorithm SHA256).Hash){throw 'BROWSER_GENERATION_BINDING_INVALID'}
+        $browserStoreModule=$browserStorePath.Replace("'","''")
         # Refuse invalid cache/setup before creating a private console receipt.
         # The child verifies again before execution to catch an intervening edit.
-        Import-Module (Join-Path $PSScriptRoot 'BrowserSnapshotStore.psm1') -Force
+        Import-Module $localBrowserStore -Force
         $null=Initialize-WorkspaceBrowserSnapshotStore -Workspace ([string]$Config.projectPath)
         $prefix="Import-Module '$browserStoreModule' -Force; `$env:CODEXLESS_BROWSER_RUNTIME_CWD='$browserWorkspace'; `$env:CODEXLESS_BROWSER_SNAPSHOT_STORE=Initialize-WorkspaceBrowserSnapshotStore -Workspace '$browserWorkspace'; "
     }

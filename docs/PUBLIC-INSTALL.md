@@ -13,6 +13,8 @@ $trustedPayload = '<payload-tree-sha256-from-authenticated-release-notes>'
 
 The destination defaults to `(Join-Path $env:LOCALAPPDATA 'CodexlessCompanion')`. An existing parent and disjoint fully qualified local project/install/payload roots are required; UNC, drive roots, overlaps and reparse traversal are refused. `-InstallDirectory` and `-Port` accept destination-local choices. `-NodeExe` may select only the exact pinned Node executable; the verified official Node archive still supplies npm. `-CodexlessArchivePath` supplies an offline archive with the exact published hash and release identity. `-CodexlessRoot` remains an input only for the non-mutating `-PlanOnly` planner.
 
+Launch `INSTALL.cmd` from Explorer for the default AppData destination. Packaged Windows apps can redirect newly created AppData files into their private cache, which Task Scheduler cannot see. Preview 7 refuses that combination before staging or creating an installation fence. When installing through a packaged app such as Codex, use an existing parent outside AppData and a custom `-InstallDirectory` disjoint from the project and payload. Keep the same custom destination for daily commands and recovery; do not move or edit a fenced installation to work around a refusal.
+
 With no tunnel inputs, installation uses zero tunnels. For one existing remote tunnel:
 
 ```powershell

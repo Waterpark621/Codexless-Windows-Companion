@@ -19,12 +19,50 @@ function Resolve-PublicInstallPath([string]$Path,[string]$Kind='Any') {
     $full
 }
 
-function Assert-PublicInstallPrerequisites {
+function Get-PublicInstallPackageContext {
+    if(!('Codexless.InstallPackageIdentity' -as [type])){
+Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+namespace Codexless {
+ public static class InstallPackageIdentity {
+  [DllImport("kernel32.dll",CharSet=CharSet.Unicode)]
+  static extern int GetCurrentPackageFamilyName(ref uint length,StringBuilder name);
+  public static bool IsPackaged() {
+   uint length=0;int result=GetCurrentPackageFamilyName(ref length,null);
+   if(result==15700)return false;
+   if(result!=122||length==0||length>4096)throw new InvalidOperationException("INSTALL_PACKAGE_IDENTITY_UNAVAILABLE");
+   var name=new StringBuilder((int)length);
+   if(GetCurrentPackageFamilyName(ref length,name)!=0)throw new InvalidOperationException("INSTALL_PACKAGE_IDENTITY_UNAVAILABLE");
+   return true;
+  }
+ }
+}
+'@
+    }
+    [pscustomobject]@{packaged=[Codexless.InstallPackageIdentity]::IsPackaged();appDataRoot=(Join-Path ([Environment]::GetFolderPath('UserProfile')) 'AppData')}
+}
+
+function Assert-PublicInstallVisibility([string]$InstallDirectory) {
+    $context=Get-PublicInstallPackageContext
+    $root=[IO.Path]::GetFullPath($InstallDirectory).TrimEnd('\','/')
+    $appData=[IO.Path]::GetFullPath($context.appDataRoot).TrimEnd('\','/')
+    # Packaged callers can create an AppData overlay invisible to Task Scheduler.
+    # Refuse before staging/fencing; an Explorer-launched install or a disjoint
+    # custom location uses the normal public flow without changing Windows policy.
+    if($context.packaged -and ($root -ieq $appData -or $root.StartsWith($appData+'\',[StringComparison]::OrdinalIgnoreCase))){
+        throw 'INSTALL_APPDATA_VIRTUALIZED: Run INSTALL.cmd from Explorer, or choose an InstallDirectory outside AppData.'
+    }
+}
+
+function Assert-PublicInstallPrerequisites([string]$InstallDirectory) {
     if($env:OS -cne 'Windows_NT' -or !$([Environment]::Is64BitOperatingSystem) -or !$([Environment]::Is64BitProcess) -or $PSVersionTable.PSVersion.Major -lt 5){throw 'INSTALL_WINDOWS_X64_REQUIRED'}
     if([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -notmatch '^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+$'){throw 'INSTALL_USER_REQUIRED'}
     foreach($name in @('Get-ScheduledTask','Register-ScheduledTask','Unregister-ScheduledTask')){
         if(!(Get-Command $name -ErrorAction SilentlyContinue)){throw 'INSTALL_SCHEDULER_REQUIRED'}
     }
+    Assert-PublicInstallVisibility $InstallDirectory
 }
 
 function Stage-PublicInstallBinary([string]$Role,[string]$Directory) {
@@ -82,7 +120,7 @@ function Invoke-PublicCompanionInstall {
     $services=New-PublicInstallServices
     # Unpublished or incomplete metadata refuses before any directory or key mutation.
     $policy=& $services.Policy codexless
-    & $services.Prerequisites
+    & $services.Prerequisites $InstallDirectory
     if($TrustedPayloadSha256 -cnotmatch '^[0-9a-f]{64}$'){throw 'INSTALL_TRUSTED_PAYLOAD_REQUIRED: Use the payload digest from the authenticated Companion release notes.'}
     $payload=Resolve-PublicInstallPath $PayloadRoot Container
     if((Get-TransactionTreeDigest $payload) -cne $TrustedPayloadSha256){throw 'INSTALL_PAYLOAD_PROVENANCE_INVALID'}
