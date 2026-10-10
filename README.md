@@ -36,6 +36,10 @@ D:\Codexless Work\
 
 Then select **`D:\Codexless Work\`** during installation. The folder must already exist. Choose only the projects you intend Codexless to work with; do not select a whole drive, your user profile root or an unnecessarily broad folder. Keep the extracted Companion ZIP folder and installation destination separate from your workspace.
 
+Companion stores Codexless's verified Browser dependency snapshots in `.codexless-browser-runtime-v1\snapshots` inside this selected workspace and starts its Browser worker from the same workspace. On Windows, copying Node into a private home-folder cache can lose the original runtime's sandbox execute access. The cache grants the current user and SYSTEM full access, and `CodexSandboxUsers` read/execute access only, keeping copied trusted files outside sandbox workspace write access. Unexpected cache permissions are refused. Codex's permission profile and workspace roots remain unchanged. Keep the generated cache folder out of project commits.
+
+The Browser health check allows up to 30 seconds for a cold Browser status request, with a 40-second overall probe deadline. Transport setup retains its four-second request limit. Missing connectivity and stalled responses still fail visibly.
+
 ### Changing workspace later
 
 This Preview has no in-place workspace switch. Run **STOP.cmd**, then follow the [verified uninstall and reinstall workflow](docs/PUBLIC-INSTALL.md#changing-workspace-after-installation). Reinstall from the verified release ZIP, choose the new workspace and run **DOCTOR.cmd**; require **PASS**. Your project files are preserved. Configure any optional tunnels again during or after reinstall.

@@ -2,7 +2,10 @@ const PROTOCOL_VERSION = "2025-03-26";
 const MAX_RESPONSE_BYTES = 256 * 1024;
 const MAX_SSE_EVENTS = 64;
 const REQUEST_TIMEOUT_MS = 4_000;
-const OVERALL_TIMEOUT_MS = 12_000;
+// Browser status lazily starts App Server, verifies the snapshot and starts
+// Node REPL. A healthy cold Windows launch can exceed the transport budget.
+const BROWSER_STATUS_TIMEOUT_MS = 30_000;
+const OVERALL_TIMEOUT_MS = 40_000;
 const CLEANUP_TIMEOUT_MS = 1_000;
 
 function emit(payload, code = 0) {
@@ -73,13 +76,13 @@ async function fetchStrict(endpoint, options, deadline, cap = REQUEST_TIMEOUT_MS
   }
 }
 
-async function readJsonResponse(response, expectedId, deadline) {
+async function readJsonResponse(response, expectedId, deadline, cap) {
   const reader = response.body?.getReader();
   if (!reader) throw new Error("missing_body");
   const chunks = [];
   let total = 0;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), remainingMs(deadline, REQUEST_TIMEOUT_MS));
+  const timer = setTimeout(() => controller.abort(), remainingMs(deadline, cap));
   const onAbort = () => { void reader.cancel().catch(() => {}); };
   controller.signal.addEventListener("abort", onAbort, { once: true });
   try {
@@ -135,7 +138,7 @@ function parseSseEvent(frame) {
   return message;
 }
 
-async function readSseResponse(response, expectedId, deadline) {
+async function readSseResponse(response, expectedId, deadline, cap) {
   const reader = response.body?.getReader();
   if (!reader) throw new Error("missing_body");
   const decoder = new TextDecoder();
@@ -143,7 +146,7 @@ async function readSseResponse(response, expectedId, deadline) {
   let total = 0;
   let events = 0;
   const timerController = new AbortController();
-  const timer = setTimeout(() => timerController.abort(), remainingMs(deadline, REQUEST_TIMEOUT_MS));
+  const timer = setTimeout(() => timerController.abort(), remainingMs(deadline, cap));
   const onAbort = () => { void reader.cancel().catch(() => {}); };
   timerController.signal.addEventListener("abort", onAbort, { once: true });
   try {
@@ -198,19 +201,19 @@ async function readSseResponse(response, expectedId, deadline) {
   }
 }
 
-async function readMatchingResponse(response, expectedId, deadline) {
+async function readMatchingResponse(response, expectedId, deadline, cap) {
   const contentType = (response.headers.get("content-type") || "").toLowerCase();
   if (contentType.includes("text/event-stream")) {
-    return await readSseResponse(response, expectedId, deadline);
+    return await readSseResponse(response, expectedId, deadline, cap);
   }
   if (contentType.includes("application/json")) {
-    return await readJsonResponse(response, expectedId, deadline);
+    return await readJsonResponse(response, expectedId, deadline, cap);
   }
   await cancelBody(response);
   throw new Error("unsupported_content_type");
 }
 
-async function postForResponse(endpoint, origin, body, expectedId, deadline, sessionId = null) {
+async function postForResponse(endpoint, origin, body, expectedId, deadline, sessionId = null, cap = REQUEST_TIMEOUT_MS) {
   const headers = {
     "content-type": "application/json",
     "accept": "application/json, text/event-stream",
@@ -222,12 +225,12 @@ async function postForResponse(endpoint, origin, body, expectedId, deadline, ses
     method: "POST",
     headers,
     body: JSON.stringify(body),
-  }, deadline);
+  }, deadline, cap);
   if (response.status !== 200) {
     await cancelBody(response);
     throw new Error("http_status");
   }
-  const result = await readMatchingResponse(response, expectedId, deadline);
+  const result = await readMatchingResponse(response, expectedId, deadline, cap);
   return {
     result,
     sessionId: response.headers.get("mcp-session-id"),
@@ -305,7 +308,7 @@ if (port === null) {
         name: "codex.browser_status",
         arguments: {},
       },
-    }, 2, deadline, sessionId);
+    }, 2, deadline, sessionId, BROWSER_STATUS_TIMEOUT_MS);
 
     const toolResult = called.result;
     const status = toolResult?.structuredContent;

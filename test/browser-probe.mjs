@@ -125,6 +125,20 @@ async function runMode(mode, extra = {}) {
       return;
     }
     if (message?.method === "tools/call") {
+      if (mode === "delayed-headers") {
+        await new Promise(resolve => setTimeout(resolve, 5_000));
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(goodTool(message.id)));
+        return;
+      }
+      if (mode === "delayed-stream" || mode === "stalled-stream") {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write(": waiting for cold Browser startup\n\n");
+        if (mode === "stalled-stream") return;
+        await new Promise(resolve => setTimeout(resolve, 5_000));
+        res.end(sseFrame(goodTool(message.id)));
+        return;
+      }
       if (mode === "redirect") {
         res.writeHead(307, { location: extra.redirectUrl });
         res.end();
@@ -165,13 +179,33 @@ async function runMode(mode, extra = {}) {
   });
 
   try {
-    return await runProbe(server.port);
+    return await runProbe(server.port, mode === "stalled-stream" ? 35_000 : 8_000);
   } finally {
     await server.close();
   }
 }
 
 let passed = 0;
+
+for (const mode of ["delayed-headers", "delayed-stream"]) {
+  const result = await runMode(mode);
+  assert.equal(result.timedOut, false);
+  assert.equal(result.code, 0);
+  assert.equal(JSON.parse(result.stdout).ok, true);
+  passed++;
+  console.log(`PASS cold Browser startup accepts ${mode} beyond four seconds`);
+}
+
+{
+  const started = Date.now();
+  const result = await runMode("stalled-stream");
+  assert.equal(result.timedOut, false);
+  assert.equal(result.code, 1);
+  assert.equal(JSON.parse(result.stdout).errorCode, "BROWSER_PROBE_UNAVAILABLE");
+  assert.ok(Date.now() - started < 34_000);
+  passed++;
+  console.log("PASS a stalled Browser stream still fails within the bounded startup budget");
+}
 
 {
   const result = await runMode("baseline");

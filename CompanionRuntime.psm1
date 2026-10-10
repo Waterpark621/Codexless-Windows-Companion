@@ -349,9 +349,16 @@ function Get-CodexlessPrivateConsoleCommand {
             "`$env:USERPROFILE='$isolated'; `$env:APPDATA='$isolated\AppData\Roaming'; `$env:LOCALAPPDATA='$isolated\AppData\Local'; `$env:CODEX_HOME='$isolated\codex'; "+
             "`$env:CODEXLESS_AGENT_TASK_STATE_FILE='$isolated\agent-task-cards.json'; `$env:CODEXLESS_BROWSER_SNAPSHOT_STORE='$isolated\browser-snapshots'; `$env:CODEXLESS_CODEX_RUNTIME='existing'; "+
             "`$env:TUNNEL_CLIENT_STATE_DIR='$isolated\tunnel-state'; `$env:TUNNEL_CLIENT_PROFILE_DIR='$isolated\tunnel-profile'; "
+    } elseif($Config.PSObject.Properties['projectPath'] -and $Config.projectPath){
+        # Copied Node executables in the home-folder cache do not inherit the
+        # official runtime's Windows sandbox execute rule. Keep the verified
+        # Browser snapshot inside the workspace already selected for this task.
+        $browserWorkspace=([IO.Path]::GetFullPath([string]$Config.projectPath)).Replace("'","''")
+        $browserStoreModule=(Join-Path $PSScriptRoot 'BrowserSnapshotStore.psm1').Replace("'","''")
+        $prefix="Import-Module '$browserStoreModule' -Force; `$env:CODEXLESS_BROWSER_RUNTIME_CWD='$browserWorkspace'; `$env:CODEXLESS_BROWSER_SNAPSHOT_STORE=Initialize-WorkspaceBrowserSnapshotStore -Workspace '$browserWorkspace'; "
     }
     $d=[char]36
-    $prefix+$d+"nodeStream="+$d+"null; "+$d+"hadNodeOptions=Test-Path Env:NODE_OPTIONS; "+$d+"previousNodeOptions=if("+$d+"hadNodeOptions){[string]"+$d+"env:NODE_OPTIONS}else{"+$d+"null}; Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue; "+$d+"env:CODEX_TOOLBOX_PUBLIC_PORT='$port'; try { "+$d+"nodeStream=[IO.File]::Open('$node',[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read); "+$d+"sha=[Security.Cryptography.SHA256]::Create(); try { "+$d+"actual=([BitConverter]::ToString("+$d+"sha.ComputeHash("+$d+"nodeStream))).Replace('-','').ToLowerInvariant() } finally { "+$d+"sha.Dispose() }; if("+$d+"actual -cne '$expected'){throw 'NODE_EXECUTABLE_MISMATCH'}; & '$node' '$launch' http; "+$d+"exitCode="+$d+"LASTEXITCODE } finally { if("+$d+"nodeStream){"+$d+"nodeStream.Dispose()}; if("+$d+"hadNodeOptions){"+$d+"env:NODE_OPTIONS="+$d+"previousNodeOptions}else{Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue}; "+$d+"previousNodeOptions="+$d+"null }; exit "+$d+"exitCode"
+    $d+"ErrorActionPreference='Stop'; "+$prefix+$d+"nodeStream="+$d+"null; "+$d+"hadNodeOptions=Test-Path Env:NODE_OPTIONS; "+$d+"previousNodeOptions=if("+$d+"hadNodeOptions){[string]"+$d+"env:NODE_OPTIONS}else{"+$d+"null}; Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue; "+$d+"env:CODEX_TOOLBOX_PUBLIC_PORT='$port'; try { "+$d+"nodeStream=[IO.File]::Open('$node',[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read); "+$d+"sha=[Security.Cryptography.SHA256]::Create(); try { "+$d+"actual=([BitConverter]::ToString("+$d+"sha.ComputeHash("+$d+"nodeStream))).Replace('-','').ToLowerInvariant() } finally { "+$d+"sha.Dispose() }; if("+$d+"actual -cne '$expected'){throw 'NODE_EXECUTABLE_MISMATCH'}; & '$node' '$launch' http; "+$d+"exitCode="+$d+"LASTEXITCODE } finally { if("+$d+"nodeStream){"+$d+"nodeStream.Dispose()}; if("+$d+"hadNodeOptions){"+$d+"env:NODE_OPTIONS="+$d+"previousNodeOptions}else{Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue}; "+$d+"previousNodeOptions="+$d+"null }; exit "+$d+"exitCode"
 }
 
 function Get-TunnelRuntimeContext($Config,$Tunnel) {

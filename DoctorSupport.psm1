@@ -105,7 +105,7 @@ function Invoke-BrowserProbeProcess {
     try {
         $argLine='"'+$probe.Replace('"','')+'" --port '+([string][int]$Config.port)
         $process=Start-Process -FilePath $Config.nodeExe -ArgumentList $argLine -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr -ErrorAction Stop
-        if(!$process.WaitForExit(15000)){
+        if(!$process.WaitForExit(45000)){
             try{$process.Kill()}catch{}
             try{[void]$process.WaitForExit(2000)}catch{}
             return [pscustomobject]@{exitCode=1;output=''}
