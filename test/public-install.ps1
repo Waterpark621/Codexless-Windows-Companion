@@ -305,7 +305,7 @@ Test 'Public CLI exposes no policy, task-name or adapter override and no disable
  Assert ($text -notmatch 'INSTALL_DISABLED_PUBLIC_PREVIEW|\$DisposableTaskName|\[hashtable\]\$Adapter')
 }
 Test 'Real Windows prerequisite check validates platform and Scheduler commands without querying tasks' {
- & $public {Assert-PublicInstallPrerequisites}
+ & $public {param($r) Assert-PublicInstallPrerequisites $r} (Join-Path $fixture 'prerequisites')
 }
 Test 'Recovery cannot silently replace a destination credential' {
  $root=Join-Path $fixture 'rekey-recovery'

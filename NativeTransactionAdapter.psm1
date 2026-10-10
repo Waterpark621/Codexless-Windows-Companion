@@ -1,9 +1,9 @@
 Set-StrictMode -Version Latest
-Import-Module (Join-Path $PSScriptRoot 'InstallTransaction.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'WindowsTaskAdapter.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'ArtifactProvenance.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'InstallTransaction.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'WindowsTaskAdapter.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'ArtifactProvenance.psm1') -Force -DisableNameChecking
 
 function Get-NativeBytesSha256([byte[]]$Bytes) {
     $sha=[Security.Cryptography.SHA256]::Create()
@@ -514,7 +514,7 @@ function New-NativeTransactionAdapter {
     if ($null -eq (Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue) -or
         $null -eq (Get-Command Register-ScheduledTask -ErrorAction SilentlyContinue) -or
         $null -eq (Get-Command Unregister-ScheduledTask -ErrorAction SilentlyContinue)) {
-        Import-Module ScheduledTasks -ErrorAction Stop
+        Import-Module ScheduledTasks -ErrorAction Stop -DisableNameChecking
     }
 
     if (@($TrustedPayloadSha256).Count -lt 1) { throw 'NATIVE_ADAPTER_PAYLOAD_DIGEST_INVALID' }
@@ -622,7 +622,7 @@ function New-NativeTransactionAdapter {
     $getHouseholdRuntimeState=Get-Command Get-HouseholdRuntimeState -ErrorAction Stop
     $testCodexlessReady=Get-Command Test-CodexlessReady -ErrorAction Stop
     $sleepCommand=Get-Command Start-Sleep -ErrorAction Stop
-    Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1')
+    Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1') -DisableNameChecking
     $assertMutation=Get-Command Assert-CompanionMutationHeld -ErrorAction Stop
 
     @{

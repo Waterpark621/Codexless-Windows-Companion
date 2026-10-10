@@ -1,5 +1,5 @@
 Set-StrictMode -Version Latest
-Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1')
+Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1') -DisableNameChecking
 
 function Assert-TaskPath {
     param([string]$Path)

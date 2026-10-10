@@ -1,8 +1,10 @@
 Set-StrictMode -Version Latest
-Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'PrivateConsole.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'VerifiedTunnel.psm1') -Force -DisableNameChecking
-Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1') -Force
+# Reusing dependencies preserves commands already imported by Doctor.ps1.
+# Force-reloading a dependency here removes those caller-visible exports.
+Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1') -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'PrivateConsole.psm1') -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'VerifiedTunnel.psm1') -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1') -DisableNameChecking
 
 function Get-DoctorListenerOwnershipSnapshot {
     param([string]$InstallDirectory,$Config,

@@ -1,9 +1,9 @@
-Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1')
+Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1') -DisableNameChecking
 Set-StrictMode -Version Latest
-Import-Module (Join-Path $PSScriptRoot 'PrivateConsole.psm1')
-Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1')
-Import-Module (Join-Path $PSScriptRoot 'GenerationIdentity.psm1')
-Import-Module (Join-Path $PSScriptRoot 'ArtifactProvenance.psm1')
+Import-Module (Join-Path $PSScriptRoot 'PrivateConsole.psm1') -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1') -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'GenerationIdentity.psm1') -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'ArtifactProvenance.psm1') -DisableNameChecking
 if(!('Codexless.TunnelLifetime' -as [type])){
  Add-Type -TypeDefinition @'
 using System;

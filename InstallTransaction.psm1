@@ -1,5 +1,5 @@
 Set-StrictMode -Version Latest
-Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1') -Force -DisableNameChecking
 
 if(!('Codexless.TransactionFileIdentity' -as [type])){
 Add-Type -TypeDefinition @'

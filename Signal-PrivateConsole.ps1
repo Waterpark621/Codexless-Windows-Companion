@@ -1,6 +1,6 @@
 param([Parameter(Mandatory=$true)][string]$ReceiptPath,[ValidateRange(1,120)][int]$TimeoutSeconds=60)
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $PSScriptRoot 'PrivateConsole.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'PrivateConsole.psm1') -Force -DisableNameChecking
 $attached = $false
 try {
     $receipt = Get-Content -LiteralPath $ReceiptPath -Raw | ConvertFrom-Json

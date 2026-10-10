@@ -33,8 +33,8 @@ try {
         throw 'DOCTOR_PACKAGE_INCOMPLETE'
     }
 
-    Import-Module $runtime -Force -ErrorAction Stop
-    Import-Module $support -Force -ErrorAction Stop
+    Import-Module $runtime -Force -ErrorAction Stop -DisableNameChecking
+    Import-Module $support -Force -ErrorAction Stop -DisableNameChecking
     $cfg=Get-CompanionConfig $InstallDirectory
 
     Add-Check 'settings' 'PASS' 'Destination settings are valid.'

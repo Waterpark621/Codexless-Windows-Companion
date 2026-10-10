@@ -141,6 +141,20 @@ try{
   $snapshot=Get-DoctorListenerOwnershipSnapshot -InstallDirectory $root -Config (& $configCommand $root) -DisposableTaskName $taskName
   Assert ($null -ne $snapshot -and $snapshot.hostPid -gt 0 -and $snapshot.wrapperPid -gt 0)
  }
+ Case 'fresh_process_doctor_establishes_real_config_owner_and_readiness' {
+  $owned=& $ownedCommand $root $adapter
+  $raw=& $exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $owned.generation 'Doctor.ps1') -InstallDirectory $root -DisposableTaskName $taskName -Json
+  $exit=$LASTEXITCODE
+  $doctor=($raw|Out-String)|ConvertFrom-Json
+  # This isolated Browser has no production connection. Check real package,
+  # Scheduler owner, listener and release readiness; do not manufacture PASS.
+  foreach($name in @('settings','release','node','task','owner','listener-ownership','codexless-readiness')){
+   $check=@($doctor.checks|Where-Object {$_.name -ceq $name})
+   Assert ($check.Count -eq 1 -and $check[0].state -ceq 'PASS')
+  }
+  $browser=@($doctor.checks|Where-Object {$_.name -ceq 'browser-backend'})
+  Assert ($browser.Count -eq 1 -and $browser[0].state -ceq 'FAIL' -and !$doctor.ok -and $exit -ne 0)
+ }
  Case 'duplicate_start'  {$r=Lifecycle Start;Assert ($r.state -ceq 'already-running')}
  Case 'status_and_readiness' {$s=Lifecycle Status;Assert ($s.ownerVerified -and $s.piecesVerified -and $s.listenerPresent -and !$s.cleanupRequired);Assert (& $readyCommand (& $configCommand $root))}
  Case 'stop' {$r=Lifecycle Stop;Assert ($r.state -ceq 'stopped');Assert (!(& $nativeCommand8 $port))}
