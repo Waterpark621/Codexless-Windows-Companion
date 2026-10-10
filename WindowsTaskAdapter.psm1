@@ -251,7 +251,9 @@ function Get-HouseholdRuntimeState {
             Invoke-PriorBootOwnership $Definition -CheckOnly
             $state.hostPresent=$false;$state.listenerPresent=$false;$state.tunnelPresent=$false
             $state | Add-Member -NotePropertyName priorBootRecoveryAvailable -NotePropertyValue $true
-        } catch { }
+        } catch {
+            $state | Add-Member -NotePropertyName priorBootRecoveryReason -NotePropertyValue (Get-PriorBootRecoveryReason $_)
+        }
     }
     $state
 }
@@ -277,6 +279,8 @@ function New-WindowsTaskAdapter {
     $startTask=Get-Command Start-HouseholdTaskPinned -ErrorAction Stop
     $getRuntimeState=Get-Command Get-HouseholdRuntimeState -ErrorAction Stop
     $priorBootRecovery=Get-Command Invoke-WindowsPriorBootRecovery -ErrorAction Stop
+    $recoveryReason=Get-Command Get-PriorBootRecoveryReason -ErrorAction Stop
+    $recoveryObservation=[pscustomobject]@{reason=$null}
     @{
         HostDelegation = $true
         WaitReady = {
@@ -299,7 +303,12 @@ function New-WindowsTaskAdapter {
         RegisterTask = { param($value) & $registerTask -Definition $value }.GetNewClosure()
         StartTask = { & $startTask -Definition $binding }.GetNewClosure()
         GetStatus = { & $getRuntimeState $binding }.GetNewClosure()
-        CanRecoverPriorBoot = { try { & $priorBootRecovery $binding -CheckOnly; $true } catch { $false } }.GetNewClosure()
+        CanRecoverPriorBoot = {
+            $recoveryObservation.reason=$null
+            try { & $priorBootRecovery $binding -CheckOnly; $true }
+            catch { $recoveryObservation.reason=& $recoveryReason $_; $false }
+        }.GetNewClosure()
+        RecoveryFailureReason = { $recoveryObservation.reason }.GetNewClosure()
         RequestGracefulStop = {
             # Only a verified task-owned Host consumes this signal. No taskkill or Stop-ScheduledTask.
             & $mutationLock $binding.LauncherDirectory { New-Item -ItemType File -Path (Join-Path $binding.LauncherDirectory 'stop.flag') -Force -ErrorAction Stop | Out-Null }

@@ -35,6 +35,14 @@ Unlike the older production launcher, Companion isolates tunnel-client state by 
 
 Status catches only `PROCESS_OWNER_UNAVAILABLE` at its observation boundary. It returns `observationComplete=false`, unverified ownership/pieces, `cleanupRequired=true`, and a degraded reason. Unobserved presence fields are null. Only a complete read-only prior-boot proof, with the task not Running, may project absence and expose `priorBootRecoveryAvailable`; the controller repeats that proof and Task-Host repeats recovery under its existing gate. Missing owner metadata alone never authorizes startup or shutdown. Status changes no receipts or process state.
 
+## Stopped tunnel records and diagnostics
+
+The qualified v0.0.14 client can return `process_running=false`, `ready=false` and a nested `process` with `mode=stopped` while omitting `pid`. This is a valid stopped representation, not an active process identity. Recovery also supports an explicit integer zero PID. Null, string, negative and positive PIDs remain refused for stopped records.
+
+Stopped status must match the retained owner's exact isolated namespace, registration, target, profile and command. Its publication must fall within the prior owner's boot generation. The destination-owned namespace ledger must independently agree with that metadata, be stopped, and have no PID or integer zero. Recovery still repeats every listener, process, receipt, boot and generation check; a missing PID alone supplies no authority. The old ledger is never edited. Unknown active-looking metadata without PID returns `RECOVERY_TUNNEL_STATUS_INCONSISTENT` rather than throwing a missing-property exception.
+
+On a failed read-only recovery preflight, Status includes `priorBootRecoveryReason`. Start includes the sanitized reason from its final preflight, and the task owner writes the same fixed code to its local log if recovery fails at startup. Known source-defined reason codes are allowlisted; arbitrary provider messages and forged codes become `RECOVERY_OBSERVATION_FAILED`. Preflight writes no diagnostic files and changes no ownership evidence.
+
 ## Safety properties
 
 - missing PID alone is never recovery authority;

@@ -90,7 +90,13 @@ try {
         try { $cleanupLease=Enter-CompanionHostLease $definition Shutdown;try{Write-HouseholdCleanupState $definition.LauncherDirectory 'task-host' $PID}finally{$cleanupLease.Dispose()} }
         catch { Write-Error 'HOUSEHOLD_CLEANUP_STATE_WRITE_FAILED: Ownership receipts were retained.' -ErrorAction Continue }
     }
-    Write-Error -Message $failure.Exception.Message -ErrorAction Continue
+    $message=$failure.Exception.Message
+    if($message -clike 'HOUSEHOLD_CLEANUP_DEGRADED:*' -and $failure.Exception.Data.Contains('RecoveryReasonCode')) {
+        $message+=' Reason: '+(Get-PriorBootRecoveryReason $failure)
+        try { Write-CompanionLog $definition.LauncherDirectory ('Prior-boot recovery refused. Reason: '+(Get-PriorBootRecoveryReason $failure)) }
+        catch { Write-Error 'HOUSEHOLD_RECOVERY_DIAGNOSTIC_WRITE_FAILED' -ErrorAction Continue }
+    }
+    Write-Error -Message $message -ErrorAction Continue
     exit 1
 } finally {
     try {

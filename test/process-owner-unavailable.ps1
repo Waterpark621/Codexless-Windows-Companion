@@ -104,4 +104,18 @@ Test 'Running task never receives the prior-boot controller absence projection' 
     Assert ($state.taskState -ceq 'Running' -and $null -eq $state.hostPresent -and !$state.ownerVerified -and $state.cleanupRequired)
     Assert (!$state.PSObject.Properties['priorBootRecoveryAvailable'])
 }
+Test 'Failed read-only recovery publishes only a sanitized reason in Status' {
+    & $module {
+        function script:Get-ScheduledTask {param($TaskName,$TaskPath,$ErrorAction) [pscustomobject]@{State='Ready'}}
+        function script:Invoke-PriorBootOwnership {param($Definition,[switch]$CheckOnly)
+            $failure=[InvalidOperationException]::new('private-provider-data')
+            $failure.Data['RecoveryReasonCode']='RECOVERY_SAME_BOOT'
+            throw $failure
+        }
+    }
+    $state=Get-HouseholdRuntimeState $def
+    Assert ($state.priorBootRecoveryReason -ceq 'RECOVERY_SAME_BOOT')
+    Assert (($state|ConvertTo-Json -Depth 5) -cnotmatch 'private-provider-data')
+    Assert (!$state.PSObject.Properties['priorBootRecoveryAvailable'])
+}
 Write-Output ("RESULT: {0}/{0} PASS; exact verifier exercised; native observations mocked; no production mutations" -f $passed)

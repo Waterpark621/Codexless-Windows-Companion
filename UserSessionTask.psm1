@@ -243,6 +243,14 @@ function Invoke-HouseholdLifecycleCore {
             # Read-only preflight. Only the Scheduler-verified owner may retire evidence,
             # after repeating every proof under its owner mutex.
             if ($state.taskState -eq 'Running' -or !$Adapter.ContainsKey('CanRecoverPriorBoot') -or !(& $Adapter.CanRecoverPriorBoot)) {
+                $reason=if($state.PSObject.Properties['priorBootRecoveryReason']){[string]$state.priorBootRecoveryReason}else{''}
+                if($state.taskState -ne 'Running' -and $Adapter.ContainsKey('RecoveryFailureReason')) {
+                    $latest=& $Adapter.RecoveryFailureReason
+                    if($latest){$reason=[string]$latest}
+                }
+                if ($reason -cmatch '^(?:RECOVERY_[A-Z_]+|GENERATION_CONTRACT_(?:INVALID|MISMATCH)|TUNNEL_GENERATION_CONTEXT_INVALID)$') {
+                    throw ('HOUSEHOLD_CLEANUP_DEGRADED: Verified recovery is required before startup. Reason: '+$reason)
+                }
                 throw 'HOUSEHOLD_CLEANUP_DEGRADED: Verified recovery is required before startup.'
             }
         }

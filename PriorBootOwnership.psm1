@@ -174,6 +174,80 @@ function Get-RecoveryTunnelStatus($Config,$Tunnel) {
     $status
 }
 
+function Assert-RecoveryStoppedTunnel($Config,$Tunnel,$Status,$Evidence) {
+    $process=$Status.process
+    # The qualified client omits PID in stopped status and stores zero in its
+    # ledger. Prove the prior owner's isolated namespace before accepting either.
+    if ($Status.process_running -or !$Status.PSObject.Properties['ready'] -or
+        $Status.ready -isnot [bool] -or $Status.ready -or $process.mode -cne 'stopped') { throw 'RECOVERY_TUNNEL_STATUS_INCONSISTENT' }
+    $pidField=$process.PSObject.Properties['pid']
+    if ($null -ne $pidField -and (($pidField.Value -isnot [int] -and $pidField.Value -isnot [long]) -or $pidField.Value -ne 0)) { throw 'RECOVERY_TUNNEL_STATUS_INCONSISTENT' }
+    $context=Get-TunnelRuntimeContext $Config $Tunnel
+    $expected=@{
+        alias=$Tunnel.alias; tunnel_id=$Tunnel.tunnelId; mode='stopped'
+        health_url_file=(Join-Path $context.stateRoot ('health\'+$Tunnel.alias+'.url'))
+        log_path=(Join-Path $context.stateRoot ('logs\'+$Tunnel.alias+'.log'))
+        profile_dir=$context.profileRoot; profile_name=$Tunnel.alias
+        profile_path=(Join-Path $context.profileRoot ($Tunnel.alias+'.yaml'))
+        config_path=(Join-Path $context.profileRoot ($Tunnel.alias+'.yaml'))
+        target_kind='server_url'; target_value=$Config.mcpUrl
+        command=("'$($Config.tunnelExe)' 'run' '--profile-dir' '$($context.profileRoot)' '--profile' '$($Tunnel.alias)'")
+    }
+    foreach($field in $expected.Keys) {
+        $value=$process.PSObject.Properties[$field]
+        if ($null -eq $value -or [string]$value.Value -cne [string]$expected[$field]) { throw 'RECOVERY_TUNNEL_METADATA_BINDING' }
+    }
+    $publication=$process.PSObject.Properties['started_at']
+    if ($null -eq $publication -or $publication.Value -isnot [string] -or
+        $publication.Value -cnotmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$') { throw 'RECOVERY_TUNNEL_METADATA_UNKNOWN' }
+    $published=[DateTimeOffset]::ParseExact($publication.Value,"yyyy-MM-dd'T'HH:mm:ss'Z'",[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::AssumeUniversal).UtcDateTime
+    $created=ConvertTo-ReceiptUtc $Evidence.owner.createdAt
+    if ($published -ge $Evidence.boot -or $published.AddSeconds(1) -le $created) { throw 'RECOVERY_TUNNEL_METADATA_GENERATION' }
+    $path=Join-Path $context.stateRoot 'processes.yaml'
+    Assert-RecoveryPath $path
+    $file=Get-Item -LiteralPath $path -ErrorAction Stop
+    if ($file.PSIsContainer -or $file.Length -eq 0 -or $file.Length -gt 1048576 -or
+        (Get-Acl -LiteralPath $path).GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $Evidence.owner.userSid) { throw 'RECOVERY_TUNNEL_STATE_INVALID' }
+    $ledger=[IO.File]::ReadAllText($path) | ConvertFrom-Json -ErrorAction Stop
+    $entry=$ledger.PSObject.Properties[$Tunnel.alias]
+    if ($null -eq $entry) { throw 'RECOVERY_TUNNEL_STATE_INVALID' }
+    $ledgerPid=$entry.Value.PSObject.Properties['pid']
+    if ($null -ne $ledgerPid -and (($ledgerPid.Value -isnot [int] -and $ledgerPid.Value -isnot [long]) -or $ledgerPid.Value -ne 0)) { throw 'RECOVERY_TUNNEL_STATE_INVALID' }
+    foreach($field in @($expected.Keys)+@('started_at','admin_profile','session_name')) {
+        $a=$entry.Value.PSObject.Properties[$field]; $b=$process.PSObject.Properties[$field]
+        if (($null -eq $a) -ne ($null -eq $b) -or
+            ($null -ne $a -and [string]$a.Value -cne [string]$b.Value)) { throw 'RECOVERY_TUNNEL_STATE_CHANGED' }
+    }
+    # No stop, ledger edit, PID adoption or receipt creation. The caller repeats
+    # every global process/listener/receipt proof before retiring old evidence.
+}
+
+function Get-PriorBootRecoveryReason($Failure) {
+    # Return only source-defined codes, never raw provider/command/config text.
+    $allowed=@(
+        'RECOVERY_TIMESTAMP_INVALID','RECOVERY_BOOT_QUERY_TIMEOUT','RECOVERY_BOOT_UNKNOWN','RECOVERY_BOOT_INVALID',
+        'RECOVERY_REPARSE_POINT','RECOVERY_TUNNEL_CONFIG_INVALID','RECOVERY_UNKNOWN_TUNNEL_EVIDENCE','RECOVERY_EVIDENCE_LIMIT',
+        'RECOVERY_EVIDENCE_INVALID','RECOVERY_OWNER_INVALID','RECOVERY_SAME_BOOT','RECOVERY_MARKER_INVALID',
+        'RECOVERY_RECEIPT_INVALID','RECOVERY_CONSOLE_INVALID','RECOVERY_TUNNEL_INVALID','RECOVERY_GENERATION_INCONSISTENT',
+        'RECOVERY_PID_BINDING_INVALID','RECOVERY_REUSED_LIFETIME_UNKNOWN','RECOVERY_REUSED_IDENTITY_CONFLICT',
+        'RECOVERY_TUNNEL_RECEIPT_MISSING','RECOVERY_TUNNEL_METADATA_UNKNOWN','RECOVERY_TUNNEL_METADATA_GENERATION',
+        'RECOVERY_TUNNEL_METADATA_BINDING','RECOVERY_TUNNEL_STATE_INVALID','RECOVERY_TUNNEL_STATE_CHANGED',
+        'RECOVERY_STATUS_UNAVAILABLE','RECOVERY_LISTENER_PRESENT','RECOVERY_PROCESS_QUERY_EMPTY',
+        'RECOVERY_TUNNEL_NOT_ABSENT','RECOVERY_TUNNEL_STATUS_INCONSISTENT','RECOVERY_PROCESS_QUERY_AMBIGUOUS',
+        'RECOVERY_LEGACY_RUN_OWNER','RECOVERY_TUNNEL_PROCESS_PRESENT','RECOVERY_RELEVANT_PROCESS_PRESENT',
+        'RECOVERY_PROCESS_UNREADABLE','RECOVERY_SETTINGS_OWNER_INVALID','RECOVERY_CONFIG_INVALID','RECOVERY_TUNNEL_LIMIT',
+        'RECOVERY_EVIDENCE_CHANGED','RECOVERY_BOOT_CHANGED','GENERATION_CONTRACT_INVALID',
+        'GENERATION_CONTRACT_MISMATCH','TUNNEL_GENERATION_CONTEXT_INVALID'
+    )
+    if ($null -ne $Failure -and $null -ne $Failure.Exception) {
+        $saved=[string]$Failure.Exception.Data['RecoveryReasonCode']
+        if ($saved -cin $allowed) { return $saved }
+        $candidate=([string]$Failure.Exception.Message -split ':',2)[0]
+        if ($candidate -cin $allowed) { return $candidate }
+    }
+    'RECOVERY_OBSERVATION_FAILED'
+}
+
 function Assert-PriorBootAbsence($Definition,$Config,$Tunnels,$Evidence) {
     # An authoritative socket table covers wildcard and IPv6 listeners too. Query
     # failure is not absence; do not use Core's connect probe (which swallows errors).
@@ -187,8 +261,12 @@ function Assert-PriorBootAbsence($Definition,$Config,$Tunnels,$Evidence) {
         if ($null -eq $status -or $status.process_running -isnot [bool] -or $status.alias -cne $tunnel.alias -or $status.tunnel_id -cne $tunnel.tunnelId) { throw 'RECOVERY_TUNNEL_NOT_ABSENT' }
         if ($status.PSObject.Properties['ready'] -and ($status.ready -isnot [bool] -or $status.ready)) { throw 'RECOVERY_TUNNEL_STATUS_INCONSISTENT' }
         if ($status.PSObject.Properties['process'] -and $null -ne $status.process) {
+            if ($status.process.PSObject.Properties['mode'] -and $status.process.mode -ceq 'stopped') {
+                Assert-RecoveryStoppedTunnel $Config $tunnel $status $Evidence
+                continue
+            }
             $statusPid = 0
-            if (![int]::TryParse([string]$status.process.pid,[ref]$statusPid) -or $statusPid -le 0) { throw 'RECOVERY_TUNNEL_STATUS_INCONSISTENT' }
+            if (!$status.process.PSObject.Properties['pid'] -or ![int]::TryParse([string]$status.process.pid,[ref]$statusPid) -or $statusPid -le 0) { throw 'RECOVERY_TUNNEL_STATUS_INCONSISTENT' }
             $statusPids += $statusPid
             Assert-RecoveryTunnelMetadata $Config $tunnel $status $Evidence
             $live=@($processes | Where-Object {[int]$_.ProcessId -eq $statusPid})
@@ -282,7 +360,9 @@ function Invoke-PriorBootOwnershipCore {
         Remove-Item -LiteralPath $marker -ErrorAction Stop
     } catch {
         # Do not surface provider errors, raw receipts, configuration or command lines.
-        throw 'HOUSEHOLD_CLEANUP_DEGRADED: Prior-boot recovery proof incomplete; ownership evidence remains fenced.'
+        $failure=[InvalidOperationException]::new('HOUSEHOLD_CLEANUP_DEGRADED: Prior-boot recovery proof incomplete; ownership evidence remains fenced.')
+        $failure.Data['RecoveryReasonCode']=Get-PriorBootRecoveryReason $_
+        throw $failure
     }
 }
 
@@ -291,4 +371,4 @@ function Invoke-PriorBootOwnership {
     if($CheckOnly){return Invoke-PriorBootOwnershipCore $Definition -CheckOnly}
     Invoke-CompanionResourceMutation $Definition.LauncherDirectory {Invoke-PriorBootOwnershipCore $Definition}
 }
-Export-ModuleMember -Function Invoke-PriorBootOwnership
+Export-ModuleMember -Function Invoke-PriorBootOwnership,Get-PriorBootRecoveryReason

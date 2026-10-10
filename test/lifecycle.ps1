@@ -223,4 +223,32 @@ Test 'Logon trigger and availability behavior remain unchanged' {
     [xml]$xml=$definition.Xml
     Assert-True ($xml.Task.Triggers.LogonTrigger.UserId -ceq $definition.UserSid -and $xml.Task.Triggers.LogonTrigger.Enabled -ceq 'true' -and $xml.Task.Settings.StartWhenAvailable -ceq 'true')
 }
+Test 'Start displays the sanitized recovery reason without scheduling a replacement' {
+    $fixture=New-Fixture;Register-Fixture $fixture
+    $fixture.mock.state.cleanupRequired=$true
+    $fixture.mock.state|Add-Member NoteProperty priorBootRecoveryReason 'RECOVERY_SAME_BOOT'
+    $fixture.adapter.CanRecoverPriorBoot={$false}
+    $caught=$false
+    try{Invoke-HouseholdLifecycle Start $definition $fixture.adapter}catch{Assert-True ($_.Exception.Message -clike '*Reason: RECOVERY_SAME_BOOT');$caught=$true}
+    Assert-True ($caught -and $fixture.mock.starts -eq 0)
+}
+Test 'Start never prints malformed recovery diagnostic text' {
+    $fixture=New-Fixture;Register-Fixture $fixture
+    $fixture.mock.state.cleanupRequired=$true
+    $fixture.mock.state|Add-Member NoteProperty priorBootRecoveryReason "RECOVERY_SAME_BOOT`nprivate-provider-data"
+    $fixture.adapter.CanRecoverPriorBoot={$false}
+    $caught=$false
+    try{Invoke-HouseholdLifecycle Start $definition $fixture.adapter}catch{Assert-True ($_.Exception.Message -cnotlike '*private-provider-data*');$caught=$true}
+    Assert-True ($caught -and $fixture.mock.starts -eq 0)
+}
+Test 'Start uses the final preflight reason when observations change after Status' {
+    $fixture=New-Fixture;Register-Fixture $fixture
+    $fixture.mock.state.cleanupRequired=$true
+    $fixture.mock.state|Add-Member NoteProperty priorBootRecoveryReason 'RECOVERY_SAME_BOOT'
+    $fixture.adapter.CanRecoverPriorBoot={$false}
+    $fixture.adapter.RecoveryFailureReason={'RECOVERY_LISTENER_PRESENT'}
+    $caught=$false
+    try{Invoke-HouseholdLifecycle Start $definition $fixture.adapter}catch{Assert-True ($_.Exception.Message -clike '*Reason: RECOVERY_LISTENER_PRESENT');$caught=$true}
+    Assert-True ($caught -and $fixture.mock.starts -eq 0)
+}
 Write-Output ("RESULT: {0}/{0} PASS; all task/process operations mocked" -f $results.Count)
