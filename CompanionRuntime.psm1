@@ -1,7 +1,7 @@
 Set-StrictMode -Version Latest
-Import-Module (Join-Path $PSScriptRoot 'BoundedNative.psm1')
-Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1')
-Import-Module (Join-Path $PSScriptRoot 'ArtifactProvenance.psm1')
+Import-Module (Join-Path $PSScriptRoot 'BoundedNative.psm1') -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1') -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'ArtifactProvenance.psm1') -DisableNameChecking
 
 $script:SupportedHostContractVersion = 'codexless-public-preview-v1'
 $script:QualifiedCodexlessRelease = [pscustomobject]@{
@@ -378,7 +378,7 @@ function Get-CodexlessPrivateConsoleCommand {
         $browserStoreModule=$browserStorePath.Replace("'","''")
         # Refuse invalid cache/setup before creating a private console receipt.
         # The child verifies again before execution to catch an intervening edit.
-        Import-Module $localBrowserStore -Force
+        Import-Module $localBrowserStore -Force -DisableNameChecking
         $null=Initialize-WorkspaceBrowserSnapshotStore -Workspace ([string]$Config.projectPath)
         $prefix="Import-Module '$browserStoreModule' -Force; `$env:CODEXLESS_BROWSER_RUNTIME_CWD='$browserWorkspace'; `$env:CODEXLESS_BROWSER_SNAPSHOT_STORE=Initialize-WorkspaceBrowserSnapshotStore -Workspace '$browserWorkspace'; "
     }

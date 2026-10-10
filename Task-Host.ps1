@@ -6,11 +6,11 @@ param(
     [string]$GenerationId
 )
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1')
-Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'WindowsTaskAdapter.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'GenerationIdentity.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1') -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'WindowsTaskAdapter.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'GenerationIdentity.psm1') -Force -DisableNameChecking
 if ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -cne $UserSid) { throw 'TASK_OWNER_INVALID' }
 Assert-HouseholdPrincipal $UserSid (Get-Acl -LiteralPath (Join-Path $LauncherDirectory 'settings.json') -ErrorAction Stop).GetOwner([Security.Principal.SecurityIdentifier]).Value
 $definitionParameters=@{

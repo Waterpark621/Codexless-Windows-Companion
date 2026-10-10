@@ -1,8 +1,8 @@
-Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1')
+Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1') -DisableNameChecking
 Set-StrictMode -Version Latest
-Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1')
-Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1')
-Import-Module (Join-Path $PSScriptRoot 'GenerationIdentity.psm1')
+Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1') -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1') -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'GenerationIdentity.psm1') -DisableNameChecking
 
 function ConvertTo-ReceiptUtc($Value) {
     # v1 CIM receipts have 1-7 fractional digits, depending on the writing runtime.

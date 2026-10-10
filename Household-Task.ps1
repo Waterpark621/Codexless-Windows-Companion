@@ -4,8 +4,8 @@ param(
     [ValidatePattern('^$|^Codexless-NativeAdapter-Test-[0-9a-f]{32}$')][string]$DisposableTaskName
 )
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1') -Force -DisableNameChecking
 $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $ownerSid = (Get-Acl -LiteralPath (Join-Path $LauncherDirectory 'settings.json') -ErrorAction Stop).GetOwner([Security.Principal.SecurityIdentifier]).Value
 $definitionParameters=@{
@@ -29,7 +29,7 @@ if($DisposableTaskName){$definitionParameters.TaskName=$DisposableTaskName}
 $definition = New-HouseholdTaskDefinition @definitionParameters
 if ($Action -eq 'Definition') { $definition.Xml; exit 0 }
 Assert-HouseholdPrincipal $currentSid $ownerSid
-Import-Module (Join-Path $PSScriptRoot 'WindowsTaskAdapter.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'WindowsTaskAdapter.psm1') -Force -DisableNameChecking
 $adapter = New-WindowsTaskAdapter $definition
 if ($Action -eq 'Status') {
     Invoke-HouseholdLifecycle -Action $Action -Definition $definition -Adapter $adapter | ConvertTo-Json -Depth 5

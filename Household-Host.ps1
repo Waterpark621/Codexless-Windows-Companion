@@ -4,17 +4,17 @@ param(
     [Parameter(Mandatory=$true)]$TaskDefinition
 )
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1')
+Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1') -DisableNameChecking
 if(![string]::IsNullOrWhiteSpace($DisposableInstanceId) -and $DisposableInstanceId -cnotmatch '^[0-9a-f]{32}$'){
     throw 'HOUSEHOLD_TEST_INSTANCE_INVALID'
 }
-Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1') -Force -ErrorAction Stop
-Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1') -Force -ErrorAction Stop
-Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'PrivateConsole.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1') -Force
+Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1') -Force -ErrorAction Stop -DisableNameChecking
+Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1') -Force -ErrorAction Stop -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'PrivateConsole.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1') -Force -DisableNameChecking
 Import-Module (Join-Path $PSScriptRoot 'VerifiedTunnel.psm1') -Force -DisableNameChecking
-Import-Module (Join-Path $PSScriptRoot 'GenerationIdentity.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'GenerationIdentity.psm1') -Force -DisableNameChecking
 
 $script:HostPidPath=Join-Path $LauncherDirectory 'host.pid'
 $script:CodexlessPidPath=Join-Path $LauncherDirectory 'codexless.pid'

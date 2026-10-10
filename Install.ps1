@@ -66,7 +66,7 @@ $installDirectory=if($installFull.Length -gt $installDriveRoot.Length){
     $installFull.TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)
 }else{$installFull}
 
-Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1') -Force -DisableNameChecking
 $release=Get-CodexlessReleaseIdentity $codexlessRoot
 $distributionBinding=Get-CodexlessDistributionBinding
 

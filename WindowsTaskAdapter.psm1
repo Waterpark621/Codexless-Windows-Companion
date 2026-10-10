@@ -1,10 +1,10 @@
 Set-StrictMode -Version Latest
-Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1')
-Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1')
-Import-Module (Join-Path $PSScriptRoot 'PrivateConsole.psm1')
-Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1')
-Import-Module (Join-Path $PSScriptRoot 'PriorBootOwnership.psm1')
-Import-Module (Join-Path $PSScriptRoot 'GenerationIdentity.psm1')
+Import-Module (Join-Path $PSScriptRoot 'MutationLock.psm1') -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'UserSessionTask.psm1') -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'PrivateConsole.psm1') -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1') -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'PriorBootOwnership.psm1') -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'GenerationIdentity.psm1') -DisableNameChecking
 Import-Module (Join-Path $PSScriptRoot 'VerifiedTunnel.psm1') -DisableNameChecking
 
 if(!('Codexless.ScheduledTaskFileAuthority' -as [type])){
@@ -265,7 +265,7 @@ function Invoke-WindowsPriorBootRecovery {
 
 function New-WindowsTaskAdapter {
     param($Definition)
-    Import-Module ScheduledTasks -ErrorAction Stop
+    Import-Module ScheduledTasks -ErrorAction Stop -DisableNameChecking
     $binding = $Definition
     $mutationLock=Get-Command Invoke-CompanionMutationLocked
     $testReady=Get-Command Test-CodexlessReady

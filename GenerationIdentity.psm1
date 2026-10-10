@@ -1,5 +1,5 @@
 Set-StrictMode -Version Latest
-Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1')
+Import-Module (Join-Path $PSScriptRoot 'CompanionRuntime.psm1') -DisableNameChecking
 
 function Get-GenerationDigest([string]$Text) {
     $sha=[Security.Cryptography.SHA256]::Create()
