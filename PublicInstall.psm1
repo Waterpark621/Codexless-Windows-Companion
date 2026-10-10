@@ -94,6 +94,16 @@ function Invoke-PublicInstallDoctor([string]$Generation,[string]$Root) {
     try {$r=($raw|Out-String)|ConvertFrom-Json -ErrorAction Stop;return ($r.ok -eq $true -and $r.verdict -ceq 'PASS')}catch{return $false}
 }
 
+function New-PublicInstallReadinessVerifier([scriptblock]$Verify,[scriptblock]$Doctor,[string]$Root) {
+    # Bind the validated destination in a function scope. GetNewClosure inside
+    # the cross-module mutation body cannot retain that body's local variables.
+    $nativeReady=$Verify;$doctorCheck=$Doctor;$destination=$Root
+    {param($generation,$record)
+        if(!(& $nativeReady $generation $record)){return $false}
+        & $doctorCheck $generation $destination
+    }.GetNewClosure()
+}
+
 function New-PublicInstallServices {
     # Internal boundaries are replaced only in deterministic fixture module scopes.
     # The public script exposes no adapter, task-name, policy or verifier overrides.
@@ -177,8 +187,7 @@ function Invoke-PublicCompanionInstall {
     }
     try {
         $adapter=& $services.Adapter @parameters
-        $verify=$adapter.VerifyReady;$doctor=$services.Doctor
-        $adapter.VerifyReady={param($generation,$record) if(!(& $verify $generation $record)){return $false}; & $doctor $generation $root}.GetNewClosure()
+        $adapter.VerifyReady=New-PublicInstallReadinessVerifier $adapter.VerifyReady $services.Doctor $root
         if($Recover){$result=Invoke-VerifiedIncompleteInstallRecovery -Root $root -Adapter $adapter}
         else {$result=Invoke-InstallTransaction -Root $root -Payload $payload -Adapter $adapter}
         [pscustomobject]@{state=$result.state;verified=$result.verified;doctorVerdict='PASS';transactionId=$result.transactionId;distributionBuildId=$policy.buildId}

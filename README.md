@@ -10,6 +10,8 @@ Preview 7 fixes fresh-process Doctor module visibility and binds the Browser hel
 
 Preview 8 anchors the guarded native command's managed process handle before resuming it. Successful tunnel stop commands retain their exit code, output and exact lifetime proof even after the command exits quickly. Failures, timeouts and uncertain lifetimes still retain recovery evidence.
 
+Preview 9 binds the public installer's native readiness and Doctor callback in a dedicated function scope. Fresh installs and verified recovery retain the validated destination across the mutation module boundary, without depending on an ambient caller variable. Doctor failures still retain the transaction fence and refuse installed success.
+
 ## Quick Start
 
 1. Download the attached Preview ZIP from [Releases](https://github.com/Waterpark621/Codexless-Windows-Companion/releases) and extract it into a new folder.
