@@ -340,4 +340,112 @@ Test 'All profiles retain independent proof during multi-tunnel protected collis
     New-MultiFixture;Add-Foreign 123;Invoke-PriorBootOwnership $def;Assert (!(Test-HouseholdOwnershipEvidence $def.LauncherDirectory))
 }
 
+function New-StoppedMetadata($Tunnel,[bool]$IncludeZeroPid=$false) {
+    $context=Get-TunnelRuntimeContext $fixtureCfg $Tunnel
+    $record=[pscustomobject]@{alias=$Tunnel.alias;tunnel_id=$Tunnel.tunnelId;mode='stopped';started_at='2026-10-03T00:00:03Z';
+        health_url_file=(Join-Path $context.stateRoot ('health\'+$Tunnel.alias+'.url'));log_path=(Join-Path $context.stateRoot ('logs\'+$Tunnel.alias+'.log'));
+        profile_dir=$context.profileRoot;profile_name=$Tunnel.alias;profile_path=(Join-Path $context.profileRoot ($Tunnel.alias+'.yaml'));config_path=(Join-Path $context.profileRoot ($Tunnel.alias+'.yaml'));
+        target_kind='server_url';target_value=$fixtureCfg.mcpUrl;command=("'$($fixtureCfg.tunnelExe)' 'run' '--profile-dir' '$($context.profileRoot)' '--profile' '$($Tunnel.alias)'")}
+    $ledgerRecord=$record|ConvertTo-Json|ConvertFrom-Json
+    $ledgerRecord|Add-Member NoteProperty pid 0
+    New-Item -ItemType Directory -Path $context.stateRoot -Force|Out-Null
+    $ledger=@{};$ledger[$Tunnel.alias]=$ledgerRecord
+    $ledger|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $context.stateRoot 'processes.yaml') -Encoding utf8
+    if($IncludeZeroPid){$record|Add-Member NoteProperty pid 0}
+    [pscustomobject]@{alias=$Tunnel.alias;tunnel_id=$Tunnel.tunnelId;process_running=$false;ready=$false;process=$record}
+}
+function Set-StoppedFixture([bool]$IncludeZeroPid=$false) {
+    New-Fixture
+    $status=New-StoppedMetadata $fixtureCfg.tunnels[0] $IncludeZeroPid
+    & $module {param($v) $script:status=$v} $status
+}
+foreach($zero in @($false,$true)) {
+    Test "Stopped tunnel status with zero PID=$zero safely recovers without editing old namespace" {
+        Set-StoppedFixture $zero
+        $context=Get-TunnelRuntimeContext $fixtureCfg $fixtureCfg.tunnels[0]
+        $path=Join-Path $context.stateRoot 'processes.yaml';$before=[IO.File]::ReadAllText($path)
+        Invoke-PriorBootOwnership $def
+        Assert (!(Test-HouseholdOwnershipEvidence $def.LauncherDirectory))
+        Assert ($before -ceq [IO.File]::ReadAllText($path))
+    }
+}
+Test 'Stopped metadata without an old tunnel receipt still requires the complete owner proof' {
+    Set-StoppedFixture;Remove-Item -LiteralPath (Join-Path $def.LauncherDirectory 'tunnel-owners\fixture.json')
+    $before=Snapshot;Invoke-PriorBootOwnership $def -CheckOnly;Assert ($before -ceq (Snapshot))
+}
+foreach($pidValue in @(42,-1,'0',$null)) {
+    Test "Stopped status with invalid PID value <$pidValue> refuses" {
+        Set-StoppedFixture;& $module {param($v) $script:status.process|Add-Member NoteProperty pid $v} $pidValue;Refuses
+    }
+}
+foreach($field in @('alias','tunnel_id','profile_dir','profile_path','health_url_file','command','target_value','mode')) {
+    Test "Stopped metadata with changed $field refuses" {
+        Set-StoppedFixture;& $module {param($f) $script:status.process.$f='foreign'} $field;Refuses
+    }
+}
+foreach($time in @('2026-10-05T05:00:00Z','2026-10-02T00:00:00Z','2026-02-31T00:00:00Z','invalid')) {
+    Test "Stopped metadata with invalid generation publication <$time> refuses" {
+        Set-StoppedFixture;& $module {param($v) $script:status.process.started_at=$v} $time;Refuses
+    }
+}
+foreach($conflict in @('ready','running','missing-ready','listener','foreign-process','same-boot')) {
+    Test "Stopped record does not bypass $conflict proof" {
+        Set-StoppedFixture
+        & $module {param($v)
+            switch($v) {
+                'ready' {$script:status.ready=$true}
+                'running' {$script:status.process_running=$true}
+                'missing-ready' {$script:status.PSObject.Properties.Remove('ready')}
+                'listener' {$script:listeners=@([pscustomobject]@{Port=7690})}
+                'foreign-process' {$script:processes+= [pscustomobject]@{ProcessId=700;Name='tunnel-client.exe';CommandLine='foreign'}}
+            }
+        } $conflict
+        if($conflict -ceq 'same-boot'){$owner.createdAt='2026-10-05T05:00:00.0000000Z';Save 'task-owner.json' $owner}
+        Refuses
+    }
+}
+foreach($conflict in @('missing','positive-pid','string-pid','wrong-mode','wrong-registration','changed-publication','malformed')) {
+    Test "Stopped status with $conflict ledger refuses" {
+        Set-StoppedFixture
+        $context=Get-TunnelRuntimeContext $fixtureCfg $fixtureCfg.tunnels[0];$path=Join-Path $context.stateRoot 'processes.yaml'
+        $ledger=Get-Content -LiteralPath $path -Raw|ConvertFrom-Json
+        switch($conflict) {
+            'missing' {Remove-Item -LiteralPath $path}
+            'positive-pid' {$ledger.fixture.pid=42}
+            'string-pid' {$ledger.fixture.pid='0'}
+            'wrong-mode' {$ledger.fixture.mode='process'}
+            'wrong-registration' {$ledger.fixture.tunnel_id='foreign'}
+            'changed-publication' {$ledger.fixture.started_at='2026-10-03T00:00:04Z'}
+            'malformed' {'{'|Set-Content -LiteralPath $path}
+        }
+        if($conflict -cnotin @('missing','malformed')){$ledger|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $path}
+        Refuses
+    }
+}
+Test 'Three stopped profiles require independent namespace validation' {
+    New-MultiFixture;$map=@{}
+    foreach($tunnel in $fixtureCfg.tunnels){$map[$tunnel.alias]=New-StoppedMetadata $tunnel}
+    & $module {param($v) $script:stoppedStatuses=$v;function script:Get-RecoveryTunnelStatus {param($Config,$Tunnel) $script:stoppedStatuses[$Tunnel.alias]}} $map
+    $before=Snapshot;Invoke-PriorBootOwnership $def -CheckOnly;Assert ($before -ceq (Snapshot))
+    $map[$fixtureCfg.tunnels[2].alias].process.target_value='foreign';Refuses
+}
+Test 'Missing PID in unknown active-looking metadata returns a stable sanitized reason' {
+    New-Fixture;& $module {$script:status|Add-Member NoteProperty process ([pscustomobject]@{mode='process'})}
+    $caught=$false
+    try{Invoke-PriorBootOwnership $def -CheckOnly}catch{Assert ((Get-PriorBootRecoveryReason $_) -ceq 'RECOVERY_TUNNEL_STATUS_INCONSISTENT');$caught=$true}
+    Assert $caught
+}
+Test 'Recovery reason does not expose arbitrary provider text or forged codes' {
+    foreach($message in @('private-provider-data','RECOVERY_PRIVATE_SECRET: private-data')) {
+        try{throw $message}catch{Assert ((Get-PriorBootRecoveryReason $_) -ceq 'RECOVERY_OBSERVATION_FAILED')}
+    }
+    $fake=[Exception]::new('private-provider-data');$fake.Data['RecoveryReasonCode']='RECOVERY_PRIVATE_SECRET'
+    Assert ((Get-PriorBootRecoveryReason ([pscustomobject]@{Exception=$fake})) -ceq 'RECOVERY_OBSERVATION_FAILED')
+}
+Test 'Same-boot refusal preserves its reason without changing preflight evidence' {
+    New-Fixture;$owner.createdAt='2026-10-05T05:00:00.0000000Z';Save 'task-owner.json' $owner;$before=Snapshot
+    $caught=$false
+    try{Invoke-PriorBootOwnership $def -CheckOnly}catch{Assert ((Get-PriorBootRecoveryReason $_) -ceq 'RECOVERY_SAME_BOOT');$caught=$true}
+    Assert $caught;Assert ($before -ceq (Snapshot))
+}
 Write-Output ("RESULT: {0}/{0} PASS; fixture receipt I/O only; native observations mocked; no live deployment/task/tunnel actions" -f $passed)

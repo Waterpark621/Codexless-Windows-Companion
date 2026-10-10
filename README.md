@@ -4,6 +4,8 @@ Install and run Codexless on Windows with automatic startup, recovery, Browser h
 
 **Preview — locally qualified; external clean-machine validation pending.**
 
+Preview 5 adds verified recovery for stopped tunnel records that omit their PID and sanitized recovery reason codes in Status, Start and the task-owner log. A prior-boot stopped record still requires the full namespace, generation, process and listener proof. See [Recovery details](docs/PRIOR-BOOT-RECOVERY.md).
+
 ## Quick Start
 
 1. Download the attached Preview ZIP from [Releases](https://github.com/Waterpark621/Codexless-Windows-Companion/releases) and extract it into a new folder.
@@ -72,6 +74,7 @@ For an interrupted install, recovery, a custom destination/port, verified uninst
 Clean second-user/machine acceptance and live credentialed three-tunnel acceptance remain **pending**. Local qualification uses disposable fixtures and never production credentials or Browser state.
 
 - [Install, maintenance and manual PowerShell reference](docs/PUBLIC-INSTALL.md)
+- [Moving from the older launcher](docs/LEGACY-LAUNCHER-MIGRATION.md)
 - [Advanced tunnel profiles](docs/MULTI-TUNNEL-PROFILES.md)
 - [Artifact provenance](docs/ARTIFACT-PROVENANCE.md)
 - [Architecture](docs/ARCHITECTURE.md), [generation identity](docs/GENERATION-CONTRACT.md) and [transactions / rollback](docs/INSTALL-TRANSACTIONS.md)
